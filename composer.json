@@ -9,11 +9,11 @@
       "email": "andreas.uretschnig@gmail.com"
     }
   ],
-  "keywords": ["http-client", "curl", "http", "php", "framework", "ezphp"],
-  "homepage": "https://github.com/ezphp/http-client",
+  "keywords": ["http-client", "curl", "http", "php", "framework", "ez-php"],
+  "homepage": "https://github.com/ez-php/http-client",
   "support": {
-    "issues": "https://github.com/ezphp/http-client/issues",
-    "source": "https://github.com/ezphp/http-client"
+    "issues": "https://github.com/ez-php/http-client/issues",
+    "source": "https://github.com/ez-php/http-client"
   },
   "require": {
     "php": "^8.5",

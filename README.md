@@ -1,19 +1,19 @@
-# ezphp/http-client
+# ez-php/http-client
 
-HTTP client module for the [ez-php framework](https://github.com/ezphp/framework) — fluent cURL-based client for making outgoing HTTP requests.
+HTTP client module for the [ez-php framework](https://github.com/ez-php/framework) — fluent cURL-based client for making outgoing HTTP requests.
 
-[![CI](https://github.com/ezphp/http-client/actions/workflows/ci.yml/badge.svg)](https://github.com/ezphp/http-client/actions/workflows/ci.yml)
+[![CI](https://github.com/ez-php/http-client/actions/workflows/ci.yml/badge.svg)](https://github.com/ez-php/http-client/actions/workflows/ci.yml)
 
 ## Requirements
 
 - PHP 8.5+
 - ext-curl
-- ezphp/framework ^1.0
+- ez-php/framework ^1.0
 
 ## Installation
 
 ```bash
-composer require ezphp/http-client
+composer require ez-php/http-client
 ```
 
 ## Setup
