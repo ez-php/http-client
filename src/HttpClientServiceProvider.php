@@ -4,8 +4,8 @@ declare(strict_types=1);
 
 namespace EzPhp\HttpClient;
 
-use EzPhp\Application\Application;
-use EzPhp\ServiceProvider\ServiceProvider;
+use EzPhp\Contracts\ContainerInterface;
+use EzPhp\Contracts\ServiceProvider;
 
 /**
  * Class HttpClientServiceProvider
@@ -35,7 +35,7 @@ final class HttpClientServiceProvider extends ServiceProvider
     {
         $this->app->bind(TransportInterface::class, CurlTransport::class);
 
-        $this->app->bind(HttpClient::class, function (Application $app): HttpClient {
+        $this->app->bind(HttpClient::class, function (ContainerInterface $app): HttpClient {
             /** @var TransportInterface $transport */
             $transport = $app->make(TransportInterface::class);
             $client = new HttpClient($transport);

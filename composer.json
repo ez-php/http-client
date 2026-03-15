@@ -1,6 +1,6 @@
 {
   "name": "ez-php/http-client",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "HTTP client module for the ez-php framework — fluent cURL-based client for making outgoing HTTP requests",
   "type": "library",
   "license": "MIT",
@@ -19,7 +19,7 @@
   "require": {
     "php": "^8.5",
     "ext-curl": "*",
-    "ez-php/framework": "0.*"
+    "ez-php/contracts": "0.*"
   },
   "require-dev": {
     "ez-php/docker": "0.*",
