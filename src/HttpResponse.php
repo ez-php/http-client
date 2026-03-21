@@ -11,7 +11,7 @@ namespace EzPhp\HttpClient;
  *
  * @package EzPhp\HttpClient
  */
-final class HttpResponse
+final readonly class HttpResponse
 {
     /**
      * HttpResponse Constructor
@@ -21,9 +21,9 @@ final class HttpResponse
      * @param array<string, string>  $headers  Header names normalised to lowercase.
      */
     public function __construct(
-        private readonly int $statusCode,
-        private readonly string $rawBody,
-        private readonly array $headers = [],
+        private int $statusCode,
+        private string $rawBody,
+        private array $headers = [],
     ) {
     }
 

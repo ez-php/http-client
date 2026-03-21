@@ -47,7 +47,6 @@ final class HttpClientServiceProvider extends ServiceProvider
 
     /**
      * @return void
-     * @throws \ReflectionException
      */
     public function boot(): void
     {

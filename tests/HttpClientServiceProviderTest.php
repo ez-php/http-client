@@ -50,6 +50,7 @@ final class HttpClientServiceProviderTest extends ApplicationTestCase
 
     /**
      * @return void
+     * @throws \ReflectionException
      */
     public function test_http_client_is_bound_in_container(): void
     {
@@ -58,6 +59,7 @@ final class HttpClientServiceProviderTest extends ApplicationTestCase
 
     /**
      * @return void
+     * @throws \ReflectionException
      */
     public function test_transport_interface_resolves_to_curl_transport(): void
     {
@@ -66,6 +68,7 @@ final class HttpClientServiceProviderTest extends ApplicationTestCase
 
     /**
      * @return void
+     * @throws \ReflectionException
      */
     public function test_static_facade_is_wired_after_bootstrap(): void
     {

@@ -12,14 +12,14 @@ namespace EzPhp\HttpClient;
  *
  * @package EzPhp\HttpClient
  */
-final class HttpClient
+final readonly class HttpClient
 {
     /**
      * HttpClient Constructor
      *
      * @param TransportInterface $transport
      */
-    public function __construct(private readonly TransportInterface $transport)
+    public function __construct(private TransportInterface $transport)
     {
     }
 
