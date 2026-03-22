@@ -62,7 +62,8 @@ final class CurlTransportIntegrationTest extends TestCase
 
         $this->assertIsArray($data);
         $this->assertArrayHasKey('url', $data);
-        $this->assertStringContainsString('httpbin.org/get', (string) $data['url']);
+        assert(is_string($data['url']));
+        $this->assertStringContainsString('httpbin.org/get', $data['url']);
     }
 
     /**
