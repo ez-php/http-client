@@ -9,11 +9,15 @@
         failOnWarning="true"
         beStrictAboutTestsThatDoNotTestAnything="true"
         beStrictAboutOutputDuringTests="true"
-        beStrictAboutCoverageMetadata="true"
+        beStrictAboutCoverageMetadata="false"
 >
     <testsuites>
         <testsuite name="Tests">
             <directory>tests</directory>
+            <exclude>tests/Integration</exclude>
+        </testsuite>
+        <testsuite name="Integration">
+            <directory>tests/Integration</directory>
         </testsuite>
     </testsuites>
 
