@@ -24,6 +24,14 @@ final readonly class HttpClient
     }
 
     /**
+     * @return TransportInterface
+     */
+    public function getTransport(): TransportInterface
+    {
+        return $this->transport;
+    }
+
+    /**
      * @param string $url
      *
      * @return HttpRequest
