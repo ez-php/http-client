@@ -146,6 +146,12 @@ After scaffolding:
 
 Only set a port for services the module actually uses. Modules without external services need no port config.
 
+### 4 — Monorepo scripts
+
+`packages.sh` at the project root is the **central package registry**. Both `push_all.sh` and `update_all.sh` source it — the package list lives in exactly one place.
+
+When adding a new module, add `"$ROOT/modules/<name>"` to the `PACKAGES` array in `packages.sh` in **alphabetical order** among the other `modules/*` entries (before `framework`, `ez-php`, and the root entry at the end).
+
 ---
 
 # Package: ez-php/http-client
@@ -336,4 +342,3 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 | Async / concurrent requests | Out of scope; requires a different I/O model (fibers, ReactPHP, etc.) |
 | Streaming responses | Out of scope |
 | Multipart file uploads | Application layer using `withBody()` with a manually constructed multipart body |
-
