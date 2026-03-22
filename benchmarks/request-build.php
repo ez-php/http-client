@@ -30,11 +30,9 @@ $transport = new FakeTransport();
 $client = new HttpClient($transport);
 
 // Warm-up
-$client->get('https://api.example.com/users')
+$client->get('https://api.example.com/users?page=1&limit=25')
     ->withHeader('Accept', 'application/json')
-    ->withHeader('Authorization', 'Bearer token123')
-    ->withQuery('page', '1')
-    ->withQuery('limit', '25');
+    ->withHeader('Authorization', 'Bearer token123');
 
 // ── Benchmark ─────────────────────────────────────────────────────────────────
 
