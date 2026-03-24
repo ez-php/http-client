@@ -257,7 +257,6 @@ final class Pool
             if ($result === null) {
                 $error = curl_error($ch);
                 curl_multi_remove_handle($mh, $ch);
-                curl_close($ch);
                 curl_multi_close($mh);
                 throw new HttpClientException('cURL error: ' . $error);
             }
@@ -274,7 +273,6 @@ final class Pool
             $responses[] = new HttpResponse($statusCode, $body, $this->parseHeaders($rawHeaders));
 
             curl_multi_remove_handle($mh, $ch);
-            curl_close($ch);
         }
 
         curl_multi_close($mh);

@@ -59,7 +59,6 @@ final class CurlTransport implements TransportInterface
 
         if (!is_string($result)) {
             $error = curl_error($ch);
-            curl_close($ch);
             throw new HttpClientException('cURL error: ' . $error);
         }
 
@@ -68,8 +67,6 @@ final class CurlTransport implements TransportInterface
 
         /** @var int $statusCode */
         $statusCode = curl_getinfo($ch, CURLINFO_HTTP_CODE);
-
-        curl_close($ch);
 
         $rawHeaders = substr($result, 0, $headerSize);
         $responseBody = substr($result, $headerSize);
