@@ -2,6 +2,12 @@
 
 All notable changes to `ez-php/http-client` are documented here.
 
+## [v1.0.0] — 2026-03-24
+
+### Documentation
+- Update CHANGELOG for v0.9.3 [skip ci] (f079658)
+
+
 ## [v0.9.3] — 2026-03-24
 
 ### Documentation
