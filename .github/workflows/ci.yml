@@ -68,7 +68,7 @@ jobs:
 
       # ---------- Performance benchmark ----------
       - name: Run performance benchmarks
-        run: docker compose exec -T app php benchmarks/request-build.php
+        run: php benchmarks/request-build.php
 
       # ---------- Stop containers ----------
 
