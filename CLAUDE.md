@@ -166,10 +166,13 @@ Fluent cURL HTTP client for outgoing requests.
 src/
 ├── TransportInterface.php         — I/O seam: send(method, url, headers, body) → HttpResponse
 ├── CurlTransport.php              — cURL implementation; all curl_* calls are isolated here
+├── FakeTransport.php              — Test double: returns pre-configured HttpResponse objects; records sent requests for assertions
 ├── HttpClient.php                 — Entry point; factory methods returning a configured HttpRequest
 ├── HttpRequest.php                — Fluent builder for a pending request; dispatches via transport
 ├── HttpResponse.php               — Immutable value object wrapping the response (status, body, headers)
 ├── HttpClientException.php        — Thrown on transport failures (not on 4xx/5xx responses)
+├── Pool.php                       — Concurrent request pool: register multiple PooledRequests, execute all, return responses
+├── PooledRequest.php              — Value object: a request + an optional key for result indexing
 ├── Http.php                       — Static façade backed by a managed HttpClient singleton
 └── HttpClientServiceProvider.php  — Binds TransportInterface + HttpClient; wires static façade; eager boot
 
