@@ -57,7 +57,7 @@ jobs:
 
       # ---------- PHPUnit with coverage ----------
       - name: Run tests with coverage
-        run: vendor/bin/phpunit
+        run: vendor/bin/phpunit --testsuite Tests
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5
@@ -118,7 +118,7 @@ jobs:
         continue-on-error: ${{ matrix.experimental }}
 
       - name: Run tests
-        run: vendor/bin/phpunit --no-coverage
+        run: vendor/bin/phpunit --testsuite Tests --no-coverage
 
   # ─────────────────────────────────────────────────────────────────────────────
   # Auto-tag + changelog generation
