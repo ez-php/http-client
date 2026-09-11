@@ -78,7 +78,9 @@ use EzPhp\HttpClient\Http;
 use EzPhp\HttpClient\HttpClient;
 use EzPhp\HttpClient\HttpResponse;
 
-$fake = new FakeTransport(new HttpResponse(200, '{"id":1}', []));
+$fake = new FakeTransport([
+    'https://api.example.com/*' => new HttpResponse(200, '{"id":1}', []),
+]);
 Http::setClient(new HttpClient($fake));
 
 // Act — no real network calls
