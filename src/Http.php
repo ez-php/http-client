@@ -109,16 +109,7 @@ final class Http
      */
     public static function response(array|string $body = '', int $status = 200, array $headers = []): HttpResponse
     {
-        $normalizedHeaders = array_change_key_case($headers, CASE_LOWER);
-
-        if (is_array($body)) {
-            $rawBody = (string) json_encode($body);
-            $normalizedHeaders['content-type'] = 'application/json';
-        } else {
-            $rawBody = $body;
-        }
-
-        return new HttpResponse($status, $rawBody, $normalizedHeaders);
+        return HttpResponse::fake($body, $status, $headers);
     }
 
     /**

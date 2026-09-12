@@ -28,6 +28,33 @@ final readonly class HttpResponse
     }
 
     /**
+     * Build a synthetic HttpResponse for use with Http::fake()/FakeTransport,
+     * without needing to construct the raw body/headers by hand.
+     *
+     * An array $body is JSON-encoded automatically and given a
+     * `Content-Type: application/json` header; a string $body is used as-is.
+     *
+     * @param array<string, mixed>|string $body    Array is JSON-encoded automatically.
+     * @param int                         $status  HTTP status code (default 200).
+     * @param array<string, string>       $headers Response headers (any case; normalised to lowercase).
+     *
+     * @return self
+     */
+    public static function fake(array|string $body = '', int $status = 200, array $headers = []): self
+    {
+        $normalizedHeaders = array_change_key_case($headers, CASE_LOWER);
+
+        if (is_array($body)) {
+            $rawBody = (string) json_encode($body);
+            $normalizedHeaders['content-type'] = 'application/json';
+        } else {
+            $rawBody = $body;
+        }
+
+        return new self($status, $rawBody, $normalizedHeaders);
+    }
+
+    /**
      * @return int
      */
     public function status(): int
