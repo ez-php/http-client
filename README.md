@@ -59,6 +59,24 @@ Http::post('https://api.example.com/form')
     ->send();
 ```
 
+### Per-request timeout
+
+Requests time out after 30 seconds by default. `withTimeout()` overrides that for a
+single request — useful for health checks that should fail fast, or for endpoints
+known to be slow:
+
+```php
+Http::get('https://api.example.com/health')
+    ->withTimeout(2)
+    ->send();
+```
+
+The timeout bounds each individual attempt. Combined with `retry()`, a request with
+`withTimeout(3)->retry(2)` can still take up to roughly 9 seconds in total.
+
+`PooledRequest::withTimeout()` does the same for concurrent requests, where each
+handle carries its own timeout.
+
 ### Injected client (without façade)
 
 ```php
@@ -97,7 +115,7 @@ Http::resetClient();
 
 | Class | Description |
 |---|---|
-| `TransportInterface` | I/O seam: `send(method, url, headers, body): HttpResponse` |
+| `TransportInterface` | I/O seam: `send(method, url, headers, body, timeoutSeconds = null): HttpResponse` |
 | `CurlTransport` | cURL implementation — all `curl_*` calls are isolated here |
 | `FakeTransport` | Test double that returns pre-configured `HttpResponse` objects |
 | `HttpClient` | Entry point; factory methods (`get`, `post`, `put`, `patch`, `delete`) returning `HttpRequest` |

@@ -14,19 +14,28 @@ namespace EzPhp\HttpClient;
  */
 final class CurlTransport implements TransportInterface
 {
-    private const int TIMEOUT_SECONDS = 30;
+    /**
+     * Fallback timeout used when the caller does not supply one.
+     */
+    public const int TIMEOUT_SECONDS = 30;
 
     /**
      * @param string                $method
      * @param string                $url
      * @param array<string, string> $headers
      * @param string                $body
+     * @param int|null              $timeoutSeconds Total request timeout; null uses TIMEOUT_SECONDS.
      *
      * @return HttpResponse
      * @throws HttpClientException
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
-    {
+    public function send(
+        string $method,
+        string $url,
+        array $headers,
+        string $body,
+        ?int $timeoutSeconds = null,
+    ): HttpResponse {
         if ($url === '') {
             throw new HttpClientException('URL cannot be empty.');
         }
@@ -46,7 +55,7 @@ final class CurlTransport implements TransportInterface
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HEADER, true);
-        curl_setopt($ch, CURLOPT_TIMEOUT, self::TIMEOUT_SECONDS);
+        curl_setopt($ch, CURLOPT_TIMEOUT, $timeoutSeconds ?? self::TIMEOUT_SECONDS);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $upperMethod);
         curl_setopt($ch, CURLOPT_HTTPHEADER, $this->formatHeaders($headers));
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);

@@ -282,7 +282,7 @@ final class PoolTest extends TestCase
             }
 
             /** @param array<string, string> $headers */
-            public function send(string $method, string $url, array $headers, string $body): HttpResponse
+            public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
             {
                 $this->ref++;
                 return new HttpResponse(200, "call {$this->ref}");
@@ -296,5 +296,68 @@ final class PoolTest extends TestCase
         ]);
 
         $this->assertSame(2, $callCount);
+    }
+
+    // ─── PooledRequest timeout ───────────────────────────────────────────────
+
+    /**
+     * @return void
+     */
+    public function test_pooled_request_default_timeout_is_null(): void
+    {
+        $this->assertNull((new PooledRequest('GET', 'https://example.com'))->getTimeoutSeconds());
+    }
+
+    /**
+     * @return void
+     */
+    public function test_pooled_request_with_timeout_is_recorded(): void
+    {
+        $request = (new PooledRequest('GET', 'https://example.com'))->withTimeout(4);
+
+        $this->assertSame(4, $request->getTimeoutSeconds());
+    }
+
+    /**
+     * @return void
+     */
+    public function test_pooled_request_with_timeout_returns_a_clone(): void
+    {
+        $request = new PooledRequest('GET', 'https://example.com');
+        $withTimeout = $request->withTimeout(4);
+
+        $this->assertNotSame($request, $withTimeout);
+        $this->assertNull($request->getTimeoutSeconds());
+    }
+
+    /**
+     * The sequential path must forward each request's own timeout to the transport.
+     *
+     * @return void
+     */
+    public function test_pool_sequential_path_forwards_per_request_timeout(): void
+    {
+        // Timeouts are collected on a public property rather than a by-reference
+        // constructor arg so PHPStan can see the value being read.
+        $transport = new class () implements TransportInterface {
+            /** @var list<int|null> */
+            public array $seen = [];
+
+            /** @param array<string, string> $headers */
+            public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
+            {
+                $this->seen[] = $timeoutSeconds;
+
+                return new HttpResponse(200, '');
+            }
+        };
+
+        $pool = new Pool($transport);
+        $pool->execute([
+            (new PooledRequest('GET', 'https://a.example.com'))->withTimeout(9),
+            new PooledRequest('GET', 'https://b.example.com'),
+        ]);
+
+        $this->assertSame([9, null], $transport->seen);
     }
 }

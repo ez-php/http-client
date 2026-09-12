@@ -31,7 +31,7 @@ final class RetrySequenceTransport implements TransportInterface
     /**
      * @param array<string, string> $headers
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
+    public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
     {
         $item = $this->sequence[$this->callCount] ?? new HttpResponse(200, '');
         $this->callCount++;
@@ -239,7 +239,7 @@ final class RetryTest extends TestCase
             }
 
             /** @param array<string, string> $headers */
-            public function send(string $method, string $url, array $headers, string $body): HttpResponse
+            public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
             {
                 $this->callRef++;
                 return new HttpResponse($this->callRef < 3 ? 503 : 200, '');

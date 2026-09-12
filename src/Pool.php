@@ -33,7 +33,10 @@ namespace EzPhp\HttpClient;
  */
 final class Pool
 {
-    private const int TIMEOUT_SECONDS = 30;
+    /**
+     * Fallback timeout for pooled requests that do not set their own.
+     */
+    public const int TIMEOUT_SECONDS = 30;
 
     /**
      * @var list<PooledRequest>
@@ -180,6 +183,7 @@ final class Pool
                 $req->getUrl(),
                 $req->getHeaders(),
                 $req->getBody(),
+                $req->getTimeoutSeconds(),
             );
         }
 
@@ -227,7 +231,7 @@ final class Pool
             curl_setopt($ch, CURLOPT_URL, $url);
             curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
             curl_setopt($ch, CURLOPT_HEADER, true);
-            curl_setopt($ch, CURLOPT_TIMEOUT, self::TIMEOUT_SECONDS);
+            curl_setopt($ch, CURLOPT_TIMEOUT, $req->getTimeoutSeconds() ?? self::TIMEOUT_SECONDS);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
             curl_setopt($ch, CURLOPT_HTTPHEADER, $this->formatHeaders($headers));
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);

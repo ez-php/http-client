@@ -25,7 +25,7 @@ final class HttpFacadeTransportSpy implements TransportInterface
     /**
      * @param array<string, string> $headers
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
+    public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
     {
         $this->method = $method;
         $this->url = $url;
@@ -42,7 +42,7 @@ final class HttpFacadeNullTransport implements TransportInterface
     /**
      * @param array<string, string> $headers
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
+    public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
     {
         return new HttpResponse(200, '');
     }

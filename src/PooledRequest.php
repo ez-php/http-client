@@ -26,6 +26,8 @@ final class PooledRequest
 
     private ?HttpResponse $resolved = null;
 
+    private ?int $timeoutSeconds = null;
+
     /**
      * PooledRequest Constructor
      *
@@ -117,6 +119,25 @@ final class PooledRequest
     }
 
     /**
+     * Set the total request timeout in seconds for this pooled request.
+     *
+     * Applies per request; without it the pool's default is used
+     * (`Pool::TIMEOUT_SECONDS`, 30 seconds). In the concurrent path each handle
+     * carries its own timeout, so a slow request does not extend the others.
+     *
+     * @param int $seconds Total request timeout in seconds.
+     *
+     * @return self
+     */
+    public function withTimeout(int $seconds): self
+    {
+        $clone = clone $this;
+        $clone->timeoutSeconds = $seconds;
+
+        return $clone;
+    }
+
+    /**
      * Resolve this request with its response.
      * Called internally by Pool after execution.
      *
@@ -175,5 +196,15 @@ final class PooledRequest
     public function getBody(): string
     {
         return $this->body;
+    }
+
+    /**
+     * Total request timeout in seconds, or null to use the pool default.
+     *
+     * @return int|null
+     */
+    public function getTimeoutSeconds(): ?int
+    {
+        return $this->timeoutSeconds;
     }
 }

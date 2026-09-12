@@ -23,7 +23,7 @@ final class FakeTransport implements TransportInterface
     private array $responseMap;
 
     /**
-     * @var list<array{method: string, url: string, headers: array<string, string>, body: string}>
+     * @var list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null}>
      */
     private array $recorded = [];
 
@@ -45,17 +45,24 @@ final class FakeTransport implements TransportInterface
      * @param string                $url
      * @param array<string, string> $headers
      * @param string                $body
+     * @param int|null              $timeoutSeconds Recorded so tests can assert the timeout reached the transport.
      *
      * @return HttpResponse
      * @throws HttpClientException When the matched stub is an exception.
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
-    {
+    public function send(
+        string $method,
+        string $url,
+        array $headers,
+        string $body,
+        ?int $timeoutSeconds = null,
+    ): HttpResponse {
         $this->recorded[] = [
             'method' => $method,
             'url' => $url,
             'headers' => $headers,
             'body' => $body,
+            'timeoutSeconds' => $timeoutSeconds,
         ];
 
         foreach ($this->responseMap as $pattern => $response) {
@@ -74,7 +81,7 @@ final class FakeTransport implements TransportInterface
     /**
      * Return all recorded requests in the order they were made.
      *
-     * @return list<array{method: string, url: string, headers: array<string, string>, body: string}>
+     * @return list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null}>
      */
     public function getRecorded(): array
     {

@@ -26,16 +26,20 @@ docker compose exec app composer full
 ```
 
 Executes in order:
-1. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-2. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
+2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
+3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-3. `phpunit` — all tests with coverage
+5. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
-composer analyse   # PHPStan only
-composer cs        # CS Fixer only
-composer test      # PHPUnit only
+composer analyse             # PHPStan only
+composer cs                  # CS Fixer only
+composer test                # PHPUnit only
+composer guidelines:check    # CLAUDE.md drift only
+composer test-classes:check  # duplicate test class names only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -119,7 +123,47 @@ Every module `CLAUDE.md` must follow this exact structure:
    - Testing approach and infrastructure requirements (MySQL, Redis, etc.)
    - What does **not** belong in this module
 
-### 3 — Docker scaffold
+**Do not edit part 1 by hand.** It is generated from `CODING_GUIDELINES.md` by
+`sync_guidelines.php` at the project root:
+
+```
+php sync_guidelines.php            # rewrite every out-of-sync CLAUDE.md
+php sync_guidelines.php --check    # report drift, exit 1 if any (CI / pre-commit)
+```
+
+Edit `CODING_GUIDELINES.md`, then run the script — it replaces everything before the
+`# Package:` / `# Directory:` / `# Project:` heading and preserves the hand-written
+section below it byte-for-byte. Editing a single copy only creates drift; before this
+script existed, all 40 copies had diverged.
+
+### 3 — Scaffolding a new module
+
+`make_module.php` at the project root writes the required-file set and the monorepo
+wiring in one step, wrapping `docker-init` for the Docker subset:
+
+```
+composer module:make <name> -- --description="..."
+php make_module.php <name> --description="..." --services=mysql,redis
+```
+
+`<name>` is the kebab-case package name; the namespace is derived as
+`EzPhp\<PascalCase>` unless `--namespace=` overrides it (`bignum` → `BigNum` and
+`opcache` → `OPCache` are existing exceptions the guess gets wrong).
+
+It writes `modules/<name>/` and registers the module in the four places the monorepo
+needs it — root `composer.json` (`autoload.psr-4`), `phpstan.neon`, `phpunit.xml`
+(test suite **and** coverage source), and `packages.sh` (alphabetical position).
+
+Two things stay manual on purpose:
+
+- **`CLAUDE.md` part 1** — only the `# Package:` section is generated. Run
+  `composer guidelines:sync` afterwards; baking a guidelines copy into the generator
+  would recreate the drift the sync script exists to prevent.
+- **The host-port table below** (`--services` only) — editing it marks all ~40
+  `CLAUDE.md` copies as drifted at once, so the next `composer full` would fail for
+  a brand-new module. The generator prints which ports to claim instead.
+
+### 4 — Docker scaffold
 
 Run from the new module root (requires `"ez-php/docker": "^1.0"` in `require-dev`):
 
@@ -129,35 +173,39 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
+vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
 ```
 
 After scaffolding:
 
-1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis) as needed
+1. Adapt `docker-compose.yml` — add or remove services (MySQL, Redis, Meilisearch) as needed
 2. Adapt `.env.example` — fill in connection defaults matching the services above
 3. Assign a unique host port for each exposed service (see table below)
 
 **Allocated host ports:**
 
-| Package | `DB_HOST_PORT` (MySQL) | `REDIS_PORT` |
-|---|---|---|
-| root (`ez-php-project`) | 3306 | 6379 |
-| `ez-php/framework` | 3307 | — |
-| `ez-php/orm` | 3309 | — |
-| `ez-php/cache` | — | 6380 |
-| `ez-php/queue` | 3310 | 6381 |
-| `ez-php/rate-limiter` | — | 6382 |
-| **next free** | **3311** | **6383** |
+| Package | `DB_HOST_PORT` (MySQL) | `REDIS_PORT` | `MEILISEARCH_PORT` |
+|---|---|---|---|
+| root (`ez-php-project`) | 3306 | 6379 | 7700 |
+| `ez-php/framework` | 3307 | — | — |
+| `ez-php/orm` | 3309 | — | — |
+| `ez-php/cache` | — | 6380 | — |
+| `ez-php/queue` | 3310 | 6381 | — |
+| `ez-php/rate-limiter` | — | 6382 | — |
+| `ez-php/search` | — | — | 7701 |
+| **next free** | **3311** | **6383** | **7702** |
 
 Only set a port for services the module actually uses. Modules without external services need no port config.
 
-### 4 — Monorepo scripts
+> The `MEILISEARCH_PORT` column is the **host** port. Inside a Compose network the service is always reachable at `http://meilisearch:7700` regardless of the host mapping — only publish-side ports need to be unique.
+
+### 5 — Monorepo scripts
 
 `packages.sh` at the project root is the **central package registry**. Both `push_all.sh` and `update_all.sh` source it — the package list lives in exactly one place.
 
@@ -205,8 +253,16 @@ tests/
 The single I/O seam for the entire package. All network I/O is behind this interface.
 
 ```php
-public function send(string $method, string $url, array $headers, string $body): HttpResponse;
+public function send(
+    string $method,
+    string $url,
+    array $headers,
+    string $body,
+    ?int $timeoutSeconds = null,
+): HttpResponse;
 ```
+
+`$timeoutSeconds` is the total request timeout; `null` means the implementation applies its own default.
 
 Throws `HttpClientException` on transport-level failures (network error, cURL init failure, empty URL). **HTTP error responses (4xx, 5xx) are not exceptions** — they are valid `HttpResponse` objects.
 
@@ -220,7 +276,7 @@ The only class in this package that calls any `curl_*` function. All cURL logic 
 
 Key behaviours:
 - `CURLOPT_RETURNTRANSFER true` + `CURLOPT_HEADER true` — response includes raw headers prepended to body
-- `CURLOPT_TIMEOUT` — fixed at 30 seconds (`TIMEOUT_SECONDS` constant)
+- `CURLOPT_TIMEOUT` — the `$timeoutSeconds` argument, falling back to the public `TIMEOUT_SECONDS` constant (30) when null
 - `CURLOPT_FOLLOWLOCATION true` — follows redirects automatically
 - `CURLOPT_CUSTOMREQUEST` — used for all verbs, including GET with a body
 - Headers split via `CURLINFO_HEADER_SIZE`; on redirects only the **last** header block is kept
@@ -256,6 +312,7 @@ Fluent **builder** for a pending request. Each wither returns a clone — the or
 | `withBody(string)` | Sets a raw string body |
 | `withJson(array)` | JSON-encodes data; sets `Content-Type: application/json` |
 | `withForm(array)` | `http_build_query()` encodes data; sets `Content-Type: application/x-www-form-urlencoded` |
+| `withTimeout(int)` | Sets the total request timeout in seconds for this request (overrides the transport default) |
 
 **Dispatch shortcuts** (each calls `send()` internally):
 
@@ -330,7 +387,10 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **`Http` lazy-creates a default client** — `Http::getClient()` creates `HttpClient(new CurlTransport())` if no client is set. This means the façade is usable without registering the service provider, at the cost of no container integration. The provider replaces this with a container-managed instance on boot.
 - **`HttpClientServiceProvider` boots eagerly** — Same rationale as `EventServiceProvider`: the static façade must be wired before application code calls `Http::get()`. Without eager resolution, a race with provider boot order would cause the façade to fall back to an unmanaged default client.
 - **Redirect header handling** — On redirects, `CurlTransport` discards all intermediate header blocks and keeps only the last one (the final response). This avoids leaking `Location:` headers from intermediate responses into the caller's view.
-- **30-second timeout** — `TIMEOUT_SECONDS` is a class constant in `CurlTransport`. If per-request timeout configuration is needed, it belongs on `HttpRequest` and must be passed through `TransportInterface::send()`.
+- **30-second default timeout, overridable per request** — `TIMEOUT_SECONDS` is a public class constant on `CurlTransport` (and `Pool`) used as the fallback. `HttpRequest::withTimeout()` / `PooledRequest::withTimeout()` override it for a single request; the value travels as the optional fifth argument of `TransportInterface::send()`. `null` means "use the transport's default", so existing callers are unaffected.
+- **The timeout parameter was added to `TransportInterface`, not worked around** — This widens the interface, which breaks any external implementor at load time (PHP requires an implementation to declare every parameter the interface does, optional ones included). It was still the right call: the alternative — smuggling the timeout through a header or a transport constructor — would have put per-request state on a per-application object. All 13 in-repo implementations (2 in `src/`, 11 test doubles) were updated together.
+- **`FakeTransport::getRecorded()` gained a `timeoutSeconds` key** — `FakeTransport` ships in `src/`, not `tests/`, so it is public test infrastructure and its recorded-request shape is part of the package's surface. Callers that index individual keys (`getRecorded()[0]['body']`) are unaffected; a caller asserting the whole array with `assertSame` would break. All in-repo callers — `Http::assertSent()`/`assertNotSent()` and the `ez-php/ai` driver tests — index individual keys.
+- **Timeout applies per attempt, not per retry sequence** — `retry()` re-dispatches the same closure, so each attempt gets the full timeout. A request with `withTimeout(3)->retry(2)` can therefore take up to ~9 seconds plus sleeps. Capping total elapsed time is an application-layer concern.
 
 ---
 
@@ -352,7 +412,8 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 | Response caching | `ez-php/cache` or application layer |
 | Authentication for outgoing requests (OAuth, API key injection) | Application layer (configure via `withHeader()`) |
 | Retry logic / exponential backoff | Application layer or a decorator wrapping `TransportInterface` |
-| Per-request timeout configuration | Future extension to `HttpRequest` and `TransportInterface::send()` |
-| Async / concurrent requests | Out of scope; requires a different I/O model (fibers, ReactPHP, etc.) |
+| Total-elapsed-time budget across a retry sequence | Application layer — `withTimeout()` bounds each attempt, not the whole sequence |
+| Connect timeout separate from total timeout (`CURLOPT_CONNECTTIMEOUT`) | Not exposed; only the total timeout is configurable |
+| Event-loop / promise-based async (fibers, ReactPHP) | Out of scope — `Pool`/`PooledRequest` (`Http::async()`, `Http::pool()`) provide concurrency via `curl_multi_exec`, which is blocking-but-parallel, not an event loop |
 | Streaming responses | Out of scope |
-| Multipart file uploads | Application layer using `withBody()` with a manually constructed multipart body |
+| Streaming multipart uploads (files larger than memory) | Application layer — `HttpRequest::attach()` builds the multipart body in memory |

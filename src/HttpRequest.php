@@ -38,6 +38,8 @@ final class HttpRequest
      */
     private array $middleware = [];
 
+    private ?int $timeoutSeconds = null;
+
     private int $retryTimes = 0;
 
     private int $retrySleepMs = 0;
@@ -213,6 +215,35 @@ final class HttpRequest
         return $clone;
     }
 
+    // ─── Builder — timeout ────────────────────────────────────────────────────
+
+    /**
+     * Set the total request timeout in seconds.
+     *
+     * Applies per request; without it the transport's own default is used
+     * (`CurlTransport::TIMEOUT_SECONDS`, 30 seconds).
+     *
+     * When combined with `retry()`, the timeout applies to each individual
+     * attempt, not to the retry sequence as a whole.
+     *
+     * Example:
+     *
+     *   Http::get('https://api.example.com/health')
+     *       ->withTimeout(2)
+     *       ->send();
+     *
+     * @param int $seconds Total request timeout in seconds.
+     *
+     * @return self
+     */
+    public function withTimeout(int $seconds): self
+    {
+        $clone = clone $this;
+        $clone->timeoutSeconds = $seconds;
+
+        return $clone;
+    }
+
     // ─── Builder — retry (item 22) ───────────────────────────────────────────
 
     /**
@@ -265,11 +296,12 @@ final class HttpRequest
         $transport = $this->transport;
         $method = $this->method;
         $url = $this->url;
+        $timeoutSeconds = $this->timeoutSeconds;
 
         // Core dispatch closure.
         /** @var \Closure(): HttpResponse $dispatch */
-        $dispatch = static function () use ($transport, $method, $url, $headers, $body): HttpResponse {
-            return $transport->send($method, $url, $headers, $body);
+        $dispatch = static function () use ($transport, $method, $url, $headers, $body, $timeoutSeconds): HttpResponse {
+            return $transport->send($method, $url, $headers, $body, $timeoutSeconds);
         };
 
         // Wrap with middleware (outermost added first).

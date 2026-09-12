@@ -28,7 +28,7 @@ final class MiddlewareTransportSpy implements TransportInterface
     /**
      * @param array<string, string> $headers
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
+    public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
     {
         $this->receivedHeaders = $headers;
 
@@ -205,7 +205,7 @@ final class MiddlewareTest extends TestCase
             }
 
             /** @param array<string, string> $headers */
-            public function send(string $method, string $url, array $headers, string $body): HttpResponse
+            public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
             {
                 $this->count++;
                 return new HttpResponse($this->count < 2 ? 500 : 200, '');

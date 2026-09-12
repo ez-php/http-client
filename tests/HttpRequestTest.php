@@ -25,6 +25,10 @@ final class HttpRequestTransportSpy implements TransportInterface
 
     public string $body = '';
 
+    public ?int $timeoutSeconds = null;
+
+    public int $callCount = 0;
+
     /**
      * HttpRequestTransportSpy Constructor
      *
@@ -37,12 +41,14 @@ final class HttpRequestTransportSpy implements TransportInterface
     /**
      * @param array<string, string> $headers
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
+    public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
     {
         $this->method = $method;
         $this->url = $url;
         $this->headers = $headers;
         $this->body = $body;
+        $this->timeoutSeconds = $timeoutSeconds;
+        $this->callCount++;
 
         return new HttpResponse(200, $this->responseBody);
     }
@@ -296,5 +302,67 @@ final class HttpRequestTest extends TestCase
         (new HttpRequest('GET', 'https://example.com', $spy))->send();
 
         $this->assertSame([], $spy->headers);
+    }
+
+    // ─── Timeout ─────────────────────────────────────────────────────────────
+
+    /**
+     * Without withTimeout() the transport receives null and applies its own default.
+     *
+     * @return void
+     */
+    public function test_default_timeout_is_null(): void
+    {
+        $spy = new HttpRequestTransportSpy();
+        (new HttpRequest('GET', 'https://example.com', $spy))->send();
+
+        $this->assertNull($spy->timeoutSeconds);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_with_timeout_is_passed_to_transport(): void
+    {
+        $spy = new HttpRequestTransportSpy();
+        (new HttpRequest('GET', 'https://example.com', $spy))->withTimeout(5)->send();
+
+        $this->assertSame(5, $spy->timeoutSeconds);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_with_timeout_returns_a_clone_and_does_not_mutate_the_original(): void
+    {
+        $spy = new HttpRequestTransportSpy();
+        $request = new HttpRequest('GET', 'https://example.com', $spy);
+
+        $withTimeout = $request->withTimeout(7);
+        $this->assertNotSame($request, $withTimeout);
+
+        $request->send();
+        $this->assertNull($spy->timeoutSeconds);
+
+        $withTimeout->send();
+        $this->assertSame(7, $spy->timeoutSeconds);
+    }
+
+    /**
+     * The timeout applies to each retry attempt, not to the sequence as a whole.
+     *
+     * @return void
+     */
+    public function test_timeout_applies_to_every_retry_attempt(): void
+    {
+        $spy = new HttpRequestTransportSpy();
+
+        (new HttpRequest('GET', 'https://example.com', $spy))
+            ->withTimeout(3)
+            ->retry(2, 0, static fn (HttpResponse $r): bool => $r->status() === 200)
+            ->send();
+
+        $this->assertSame(3, $spy->callCount);
+        $this->assertSame(3, $spy->timeoutSeconds);
     }
 }

@@ -31,7 +31,7 @@ final class MultipartCaptureTransport implements TransportInterface
     /**
      * @param array<string, string> $headers
      */
-    public function send(string $method, string $url, array $headers, string $body): HttpResponse
+    public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
     {
         $this->capturedMethod = $method;
         $this->capturedUrl = $url;
