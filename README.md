@@ -77,6 +77,37 @@ The timeout bounds each individual attempt. Combined with `retry()`, a request w
 `PooledRequest::withTimeout()` does the same for concurrent requests, where each
 handle carries its own timeout.
 
+### Streaming responses
+
+`stream()` returns as soon as the response headers arrive; the body is read while you iterate:
+
+```php
+$stream = Http::post('https://api.example.com/export')
+    ->withJson(['format' => 'ndjson'])
+    ->withIdleTimeout(60)
+    ->stream();
+
+if (!$stream->ok()) {
+    throw new RuntimeException($stream->body());
+}
+
+foreach ($stream as $chunk) {
+    // raw bytes as received — a line may span several chunks
+}
+```
+
+Streams have no total timeout; `withIdleTimeout()` (default 30 s) fails the transfer only when no data arrives for that long. `retry()` and `withMiddleware()` cannot be combined with `stream()`. Stopping early — `break`, `$stream->close()`, or dropping the stream or its iterator — closes the connection.
+
+For `text/event-stream` bodies, `SseDecoder` yields complete events:
+
+```php
+use EzPhp\HttpClient\Sse\SseDecoder;
+
+foreach (SseDecoder::decode($stream) as $message) {
+    echo $message->event(), ': ', $message->data(), PHP_EOL;
+}
+```
+
 ### Injected client (without façade)
 
 ```php
@@ -107,17 +138,36 @@ $data = Http::get('https://api.example.com/users/1')->json();
 Http::resetClient();
 ```
 
+Streamed requests use the same fake. `HttpStream::fake()` takes the chunks; a `Throwable` in the list is thrown at that position:
+
+```php
+use EzPhp\HttpClient\HttpStream;
+use EzPhp\HttpClient\HttpStreamException;
+
+Http::fake([
+    'https://api.example.com/*' => HttpStream::fake(["data: 1\n\n", new HttpStreamException('reset')]),
+]);
+```
+
+A plain `Http::response()` fixture also works for `stream()` and arrives as a single chunk.
+
 ## Error handling
 
-`HttpClientException` is thrown only on **transport failures** (cURL error, DNS failure, empty URL). HTTP 4xx/5xx responses are returned as normal `HttpResponse` objects — check `ok()` or `status()`.
+`HttpClientException` is thrown only on **transport failures** (cURL error, DNS failure, empty URL). HTTP 4xx/5xx responses are returned as normal `HttpResponse` / `HttpStream` objects — check `ok()` or `status()`.
+
+For streams, failures before the headers throw `HttpClientException` from `stream()`; failures while reading the body (idle timeout, connection lost) throw `HttpStreamException`, a subclass, from the iterator.
 
 ## Classes
 
 | Class | Description |
 |---|---|
 | `TransportInterface` | I/O seam: `send(method, url, headers, body, timeoutSeconds = null): HttpResponse` |
-| `CurlTransport` | cURL implementation — all `curl_*` calls are isolated here |
-| `FakeTransport` | Test double that returns pre-configured `HttpResponse` objects |
+| `StreamingTransportInterface` | Extends `TransportInterface` with `stream(method, url, headers, body, idleTimeoutSeconds): HttpStream` |
+| `CurlTransport` | cURL implementation of both — all `curl_*` calls are isolated here and in `CurlStreamHandle` |
+| `FakeTransport` | Test double that returns pre-configured `HttpResponse` / `HttpStream` objects |
+| `HttpStream` | Streamed response: `status()`, `headers()`, `ok()`, chunk iteration, `body()`, `close()`, `fake()` |
+| `HttpStreamException` | Thrown while reading a stream body (idle timeout, connection lost) |
+| `Sse\SseDecoder` / `Sse\SseMessage` | Decode `text/event-stream` chunks into events |
 | `HttpClient` | Entry point; factory methods (`get`, `post`, `put`, `patch`, `delete`) returning `HttpRequest` |
 | `HttpRequest` | Fluent builder; clone-based withers; dispatch shortcuts (`send`, `json`, `body`, `status`) |
 | `HttpResponse` | Immutable value object: `status()`, `body()`, `json()`, `header()`, `ok()` |

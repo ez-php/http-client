@@ -165,4 +165,14 @@ final class HttpResponseTest extends TestCase
 
         $this->assertSame('', $response->header('x-missing'));
     }
+
+    /**
+     * @return void
+     */
+    public function test_headers_returns_all_headers(): void
+    {
+        $response = HttpResponse::fake('', 200, ['X-One' => '1', 'X-Two' => '2']);
+
+        $this->assertSame(['x-one' => '1', 'x-two' => '2'], $response->headers());
+    }
 }

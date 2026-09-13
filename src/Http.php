@@ -77,7 +77,8 @@ final class Http
      * making real network requests.
      *
      * Keys are URL patterns (fnmatch syntax), values are HttpResponse instances
-     * created with Http::response() or HttpClientException instances.
+     * created with Http::response(), HttpStream::fake() instances for streamed
+     * requests, or HttpClientException instances.
      *
      * Examples:
      *
@@ -88,7 +89,7 @@ final class Http
      *       'https://api.example.com/users*' => Http::response(['id' => 1], 201),
      *   ]);
      *
-     * @param array<string, HttpResponse|HttpClientException> $responses
+     * @param array<string, HttpResponse|HttpStream|HttpClientException> $responses
      *
      * @return void
      */

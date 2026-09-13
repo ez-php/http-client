@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace Tests\HttpClient;
 
+use EzPhp\HttpClient\HttpClientException;
 use EzPhp\HttpClient\HttpRequest;
 use EzPhp\HttpClient\HttpResponse;
+use EzPhp\HttpClient\HttpStream;
+use EzPhp\HttpClient\StreamingTransportInterface;
 use EzPhp\HttpClient\TransportInterface;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
@@ -55,12 +58,56 @@ final class HttpRequestTransportSpy implements TransportInterface
 }
 
 /**
+ * Streaming transport spy that records every stream() invocation.
+ */
+final class HttpRequestStreamingTransportSpy implements StreamingTransportInterface
+{
+    public ?string $method = null;
+
+    public ?string $url = null;
+
+    /** @var array<string, string> */
+    public array $headers = [];
+
+    public string $body = '';
+
+    public ?int $idleTimeoutSeconds = null;
+
+    public ?HttpStream $returned = null;
+
+    /**
+     * @param array<string, string> $headers
+     */
+    public function send(string $method, string $url, array $headers, string $body, ?int $timeoutSeconds = null): HttpResponse
+    {
+        return new HttpResponse(200, '');
+    }
+
+    /**
+     * @param array<string, string> $headers
+     */
+    public function stream(string $method, string $url, array $headers, string $body, int $idleTimeoutSeconds): HttpStream
+    {
+        $this->method = $method;
+        $this->url = $url;
+        $this->headers = $headers;
+        $this->body = $body;
+        $this->idleTimeoutSeconds = $idleTimeoutSeconds;
+        $this->returned = HttpStream::fake(['ok']);
+
+        return $this->returned;
+    }
+}
+
+/**
  * Class HttpRequestTest
  *
  * @package Tests\HttpClient
  */
 #[CoversClass(HttpRequest::class)]
 #[UsesClass(HttpResponse::class)]
+#[UsesClass(HttpStream::class)]
+#[UsesClass(HttpClientException::class)]
 final class HttpRequestTest extends TestCase
 {
     // ─── HTTP method ─────────────────────────────────────────────────────────
@@ -364,5 +411,81 @@ final class HttpRequestTest extends TestCase
 
         $this->assertSame(3, $spy->callCount);
         $this->assertSame(3, $spy->timeoutSeconds);
+    }
+
+    // ─── stream() ─────────────────────────────────────────────────────────────
+
+    public function test_stream_passes_method_url_headers_and_body_to_the_transport(): void
+    {
+        $spy = new HttpRequestStreamingTransportSpy();
+
+        $stream = (new HttpRequest('POST', 'https://api.example.com/s', $spy))
+            ->withHeaders(['Authorization' => 'Bearer t'])
+            ->withJson(['stream' => true])
+            ->stream();
+
+        $this->assertSame($spy->returned, $stream);
+        $this->assertSame('POST', $spy->method);
+        $this->assertSame('https://api.example.com/s', $spy->url);
+        $this->assertSame(['Authorization' => 'Bearer t', 'Content-Type' => 'application/json'], $spy->headers);
+        $this->assertSame('{"stream":true}', $spy->body);
+    }
+
+    public function test_stream_uses_the_default_idle_timeout(): void
+    {
+        $spy = new HttpRequestStreamingTransportSpy();
+
+        (new HttpRequest('GET', 'https://example.com', $spy))->stream();
+
+        $this->assertSame(HttpRequest::DEFAULT_IDLE_TIMEOUT_SECONDS, $spy->idleTimeoutSeconds);
+        $this->assertSame(30, HttpRequest::DEFAULT_IDLE_TIMEOUT_SECONDS);
+    }
+
+    public function test_with_idle_timeout_overrides_the_default_on_a_clone(): void
+    {
+        $spy = new HttpRequestStreamingTransportSpy();
+        $original = new HttpRequest('GET', 'https://example.com', $spy);
+
+        $original->withIdleTimeout(90)->stream();
+        $this->assertSame(90, $spy->idleTimeoutSeconds);
+
+        $original->stream();
+        $this->assertSame(30, $spy->idleTimeoutSeconds);
+    }
+
+    public function test_stream_sends_a_multipart_body(): void
+    {
+        $spy = new HttpRequestStreamingTransportSpy();
+
+        (new HttpRequest('POST', 'https://example.com', $spy))->attach('file', 'contents', 'a.txt', 'text/plain')->stream();
+
+        $this->assertStringStartsWith('multipart/form-data; boundary=', $spy->headers['Content-Type']);
+        $this->assertStringContainsString('filename="a.txt"', $spy->body);
+    }
+
+    public function test_stream_rejects_retry(): void
+    {
+        $this->expectException(HttpClientException::class);
+        $this->expectExceptionMessage('stream() does not support retry()');
+
+        (new HttpRequest('GET', 'https://example.com', new HttpRequestStreamingTransportSpy()))->retry(2)->stream();
+    }
+
+    public function test_stream_rejects_middleware(): void
+    {
+        $this->expectException(HttpClientException::class);
+        $this->expectExceptionMessage('stream() does not support withMiddleware()');
+
+        (new HttpRequest('GET', 'https://example.com', new HttpRequestStreamingTransportSpy()))
+            ->withMiddleware(static fn (\Closure $next): HttpResponse => new HttpResponse(200, ''))
+            ->stream();
+    }
+
+    public function test_stream_rejects_a_non_streaming_transport(): void
+    {
+        $this->expectException(HttpClientException::class);
+        $this->expectExceptionMessage(HttpRequestTransportSpy::class . ' does not support streaming');
+
+        (new HttpRequest('GET', 'https://example.com', new HttpRequestTransportSpy()))->stream();
     }
 }

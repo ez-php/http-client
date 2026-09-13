@@ -13,8 +13,11 @@ use RuntimeException;
  * HTTP error status codes (4xx, 5xx) are NOT exceptions — they are valid
  * HttpResponse objects with the appropriate status code.
  *
+ * Not final: HttpStreamException extends it, so `catch (HttpClientException)`
+ * keeps covering every transport failure, streamed or not.
+ *
  * @package EzPhp\HttpClient
  */
-final class HttpClientException extends RuntimeException
+class HttpClientException extends RuntimeException
 {
 }

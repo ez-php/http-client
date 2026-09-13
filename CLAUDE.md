@@ -230,6 +230,13 @@ src/
 ├── HttpRequest.php                — Fluent builder for a pending request; dispatches via transport
 ├── HttpResponse.php               — Immutable value object wrapping the response (status, body, headers)
 ├── HttpClientException.php        — Thrown on transport failures (not on 4xx/5xx responses)
+├── StreamingTransportInterface.php — Extends TransportInterface with stream() → HttpStream
+├── CurlStreamHandle.php           — @internal: one streamed transfer in its own curl_multi; header-block detection; pump
+├── HttpStream.php                 — Streamed response: status/headers up front, chunk generator, body(), close(), fake()
+├── HttpStreamException.php        — Mid-body stream failure (idle timeout, connection lost); extends HttpClientException
+├── Sse/
+│   ├── SseDecoder.php             — WHATWG event-stream decoder over raw chunks
+│   └── SseMessage.php             — Decoded event: data, event, id
 ├── Pool.php                       — Concurrent request pool: register multiple PooledRequests, execute all, return responses
 ├── PooledRequest.php              — Value object: a request + an optional key for result indexing
 ├── Http.php                       — Static façade backed by a managed HttpClient singleton
@@ -241,6 +248,10 @@ tests/
 ├── HttpRequestTest.php                   — Covers HttpRequest builder: withHeaders, withJson, withForm, send shortcuts
 ├── HttpResponseTest.php                  — Covers HttpResponse: status, body, json, header, ok
 ├── HttpTest.php                          — Covers Http façade: setClient, resetClient, lazy default client
+├── HttpStreamTest.php                    — HttpStream accessors, iteration, body(), close hook, fake()
+├── CurlTransportStreamTest.php           — Real streamed transfers against a php -S loopback server
+├── Support/stream-server.php             — Router for that server (one path per transfer behaviour)
+├── Sse/SseDecoderTest.php                — Decoder spec cases; fixture split at every byte offset
 └── HttpClientServiceProviderTest.php     — Covers provider registration and transport rebinding
 ```
 
@@ -391,6 +402,14 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **The timeout parameter was added to `TransportInterface`, not worked around** — This widens the interface, which breaks any external implementor at load time (PHP requires an implementation to declare every parameter the interface does, optional ones included). It was still the right call: the alternative — smuggling the timeout through a header or a transport constructor — would have put per-request state on a per-application object. All 13 in-repo implementations (2 in `src/`, 11 test doubles) were updated together.
 - **`FakeTransport::getRecorded()` gained a `timeoutSeconds` key** — `FakeTransport` ships in `src/`, not `tests/`, so it is public test infrastructure and its recorded-request shape is part of the package's surface. Callers that index individual keys (`getRecorded()[0]['body']`) are unaffected; a caller asserting the whole array with `assertSame` would break. All in-repo callers — `Http::assertSent()`/`assertNotSent()` and the `ez-php/ai` driver tests — index individual keys.
 - **Timeout applies per attempt, not per retry sequence** — `retry()` re-dispatches the same closure, so each attempt gets the full timeout. A request with `withTimeout(3)->retry(2)` can therefore take up to ~9 seconds plus sleeps. Capping total elapsed time is an application-layer concern.
+- **Streaming is a pull over a push** — cURL pushes body bytes into `WRITEFUNCTION` while a transfer runs; generators pull. `CurlStreamHandle::pump()` drives one easy handle through its own `curl_multi` only when the consumer asks for the next chunk. Nothing pumps while nobody pulls, so the socket buffer fills and the server waits — back-pressure without a memory bound to tune. Rejected: Fibers suspended from a cURL C callback (fragile, hidden) and a blocking callback API (does not compose with `AiStream` or `StreamedResponse`).
+- **Idle timeout, no total timeout, for streams** — a streamed answer may run for minutes. The transfer fails only when no data arrives for `withIdleTimeout()` seconds (default `HttpRequest::DEFAULT_IDLE_TIMEOUT_SECONDS`, 30). The idle clock runs inside `pump()` only, so a slow consumer between pulls never looks like a silent server. Connect is bounded separately by `CurlTransport::CONNECT_TIMEOUT_SECONDS` (10).
+- **`stream()` returns after the final header block** — `HEADERFUNCTION` starts a new block on each `HTTP/` status line and treats a block as final unless it is `1xx` or a `3xx` with `Location`. Providers send headers at once but the first token much later, so waiting for body bytes would delay error handling.
+- **Who closes the connection** — before iteration starts, `HttpStream::close()` / `__destruct()`; once `getIterator()` was called, the generator owns it (its `finally` closes the handle when it finishes or is destroyed). Otherwise `$it = $http->stream()->getIterator()` would lose its connection the moment the temporary `HttpStream` is freed — `CurlTransportStreamTest` caught exactly that.
+- **`StreamingTransportInterface` is separate from `TransportInterface`** — widening `TransportInterface` again (see the timeout decision above) would have broken every external transport and all in-repo test doubles for a capability most of them never need. `HttpRequest::stream()` checks for the interface and throws a clear `HttpClientException` otherwise.
+- **`stream()` rejects `retry()` and `withMiddleware()`** — a stream cannot restart after its first byte, and middleware closures are typed for a complete `HttpResponse`. Throwing is explicit; silently ignoring them would not be.
+- **`HttpClientException` is not final** — `HttpStreamException` extends it so one `catch (HttpClientException)` still covers every transport failure.
+- **`curl_close()` is never called** — deprecated in PHP 8.5 and without effect since 8.0; `curl_multi_remove_handle()` + `curl_multi_close()` release the connection.
 
 ---
 
@@ -398,7 +417,7 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 
 - **No real network calls in unit tests** — Implement a `TransportInterface` test double (anonymous class or stub) that returns a hard-coded `HttpResponse`. Pass it to `HttpClient` directly or via `Http::setClient()`.
 - **Always call `Http::resetClient()`** in `setUp()` and `tearDown()` of any test that touches the `Http` façade. Omitting this leaks a client instance between tests.
-- **`CurlTransport` is not unit-tested** — Its behaviour depends on live network access. Cover it via integration tests in a Docker environment where outbound connections are available.
+- **`CurlTransport::send()` against the internet, `stream()` against loopback** — `tests/Integration/CurlTransportIntegrationTest.php` needs httpbin.org and is excluded from the default suite. `CurlTransportStreamTest` starts `php -S 127.0.0.1:<free port>` with `PHP_CLI_SERVER_WORKERS=4` (a hanging endpoint would otherwise block the next test) and runs in the default suite: incremental arrival, redirects, idle timeout before and after headers, a dropped connection, error statuses, and a server-side marker proving `close()` and a dropped iterator abort the transfer.
 - **`HttpRequest` builder tests** — Construct with a test-double transport, chain builder methods, call `send()`, assert the transport received the expected method/URL/headers/body and that the returned `HttpResponse` is passed through correctly.
 - **`#[UsesClass]` required** — PHPUnit is configured with `beStrictAboutCoverageMetadata=true`. Declare indirectly used classes with `#[UsesClass]`.
 
@@ -413,7 +432,8 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 | Authentication for outgoing requests (OAuth, API key injection) | Application layer (configure via `withHeader()`) |
 | Retry logic / exponential backoff | Application layer or a decorator wrapping `TransportInterface` |
 | Total-elapsed-time budget across a retry sequence | Application layer — `withTimeout()` bounds each attempt, not the whole sequence |
-| Connect timeout separate from total timeout (`CURLOPT_CONNECTTIMEOUT`) | Not exposed; only the total timeout is configurable |
+| Configurable connect timeout (`CURLOPT_CONNECTTIMEOUT`) | Not exposed; `send()` has only the total timeout, `stream()` a fixed 10 s connect timeout |
 | Event-loop / promise-based async (fibers, ReactPHP) | Out of scope — `Pool`/`PooledRequest` (`Http::async()`, `Http::pool()`) provide concurrency via `curl_multi_exec`, which is blocking-but-parallel, not an event loop |
-| Streaming responses | Out of scope |
+| Streaming for `Pool`, or retry/middleware for streams | Out of scope — see the `stream()` design decisions above |
+| `EventSource` reconnection (`retry`, `Last-Event-ID`) | Application layer — `SseDecoder` only decodes |
 | Streaming multipart uploads (files larger than memory) | Application layer — `HttpRequest::attach()` builds the multipart body in memory |

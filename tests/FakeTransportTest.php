@@ -10,6 +10,7 @@ use EzPhp\HttpClient\HttpClient;
 use EzPhp\HttpClient\HttpClientException;
 use EzPhp\HttpClient\HttpRequest;
 use EzPhp\HttpClient\HttpResponse;
+use EzPhp\HttpClient\HttpStream;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\UsesClass;
 
@@ -26,6 +27,7 @@ use PHPUnit\Framework\Attributes\UsesClass;
 #[UsesClass(HttpClient::class)]
 #[UsesClass(HttpRequest::class)]
 #[UsesClass(HttpResponse::class)]
+#[UsesClass(HttpStream::class)]
 final class FakeTransportTest extends TestCase
 {
     protected function setUp(): void
@@ -264,5 +266,94 @@ final class FakeTransportTest extends TestCase
         $this->expectExceptionMessage('requires Http::fake()');
 
         Http::assertSent(fn () => true);
+    }
+
+    // ─── stream() ─────────────────────────────────────────────────────────────
+
+    public function test_stream_returns_a_matched_http_stream(): void
+    {
+        $fixture = HttpStream::fake(['a', 'b']);
+        $transport = new FakeTransport(['*' => $fixture]);
+
+        $this->assertSame($fixture, $transport->stream('GET', 'https://example.com', [], '', 30));
+    }
+
+    public function test_stream_wraps_a_matched_http_response_as_one_chunk(): void
+    {
+        $transport = new FakeTransport(['*' => HttpResponse::fake('data: x', 202, ['X-Test' => 'yes'])]);
+
+        $stream = $transport->stream('GET', 'https://example.com', [], '', 30);
+
+        $this->assertSame(202, $stream->status());
+        $this->assertSame('yes', $stream->header('x-test'));
+        $this->assertSame(['data: x'], iterator_to_array($stream, false));
+    }
+
+    public function test_stream_wraps_an_empty_http_response_as_no_chunks(): void
+    {
+        $transport = new FakeTransport(['*' => HttpResponse::fake('', 204)]);
+
+        $this->assertSame([], iterator_to_array($transport->stream('GET', 'https://example.com', [], '', 30), false));
+    }
+
+    public function test_stream_throws_a_matched_exception(): void
+    {
+        $transport = new FakeTransport(['*' => new HttpClientException('refused')]);
+
+        $this->expectException(HttpClientException::class);
+        $this->expectExceptionMessage('refused');
+
+        $transport->stream('GET', 'https://example.com', [], '', 30);
+    }
+
+    public function test_stream_without_a_match_returns_an_empty_ok_stream(): void
+    {
+        $stream = (new FakeTransport())->stream('GET', 'https://example.com', [], '', 30);
+
+        $this->assertSame(200, $stream->status());
+        $this->assertSame('', $stream->body());
+    }
+
+    public function test_send_drains_a_matched_http_stream(): void
+    {
+        $transport = new FakeTransport(['*' => HttpStream::fake(['he', 'llo'], 201, ['X-Test' => 'yes'])]);
+
+        $response = $transport->send('GET', 'https://example.com', [], '');
+
+        $this->assertSame(201, $response->status());
+        $this->assertSame('hello', $response->body());
+        $this->assertSame('yes', $response->header('x-test'));
+    }
+
+    public function test_stream_records_the_idle_timeout(): void
+    {
+        $transport = new FakeTransport();
+        $transport->stream('POST', 'https://example.com/s', ['X-A' => '1'], 'payload', 45);
+
+        $recorded = $transport->getRecorded()[0];
+
+        $this->assertSame('POST', $recorded['method']);
+        $this->assertSame('https://example.com/s', $recorded['url']);
+        $this->assertSame(['X-A' => '1'], $recorded['headers']);
+        $this->assertSame('payload', $recorded['body']);
+        $this->assertNull($recorded['timeoutSeconds']);
+        $this->assertSame(45, $recorded['idleTimeoutSeconds']);
+    }
+
+    public function test_send_records_a_null_idle_timeout(): void
+    {
+        $transport = new FakeTransport();
+        $transport->send('GET', 'https://example.com', [], '', 5);
+
+        $this->assertNull($transport->getRecorded()[0]['idleTimeoutSeconds']);
+    }
+
+    public function test_http_fake_accepts_a_stream_fixture(): void
+    {
+        Http::fake(['*' => HttpStream::fake(['streamed'])]);
+
+        $transport = Http::getClient()->getTransport();
+        $this->assertInstanceOf(FakeTransport::class, $transport);
+        $this->assertSame('streamed', $transport->stream('GET', 'https://example.com', [], '', 30)->body());
     }
 }

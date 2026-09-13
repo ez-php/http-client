@@ -22,6 +22,11 @@ namespace EzPhp\HttpClient;
 final class HttpRequest
 {
     /**
+     * Idle timeout for stream() when withIdleTimeout() was not called.
+     */
+    public const int DEFAULT_IDLE_TIMEOUT_SECONDS = 30;
+
+    /**
      * @var array<string, string>
      */
     private array $headers = [];
@@ -39,6 +44,8 @@ final class HttpRequest
     private array $middleware = [];
 
     private ?int $timeoutSeconds = null;
+
+    private int $idleTimeoutSeconds = self::DEFAULT_IDLE_TIMEOUT_SECONDS;
 
     private int $retryTimes = 0;
 
@@ -226,6 +233,8 @@ final class HttpRequest
      * When combined with `retry()`, the timeout applies to each individual
      * attempt, not to the retry sequence as a whole.
      *
+     * Does not apply to stream(), which has no total limit — see withIdleTimeout().
+     *
      * Example:
      *
      *   Http::get('https://api.example.com/health')
@@ -240,6 +249,25 @@ final class HttpRequest
     {
         $clone = clone $this;
         $clone->timeoutSeconds = $seconds;
+
+        return $clone;
+    }
+
+    /**
+     * Set the idle timeout for stream(): the maximum time without receiving any data.
+     *
+     * A streamed response may legitimately run for minutes, so streams have no
+     * total timeout; the transfer fails only when the server goes silent for
+     * this long. Defaults to DEFAULT_IDLE_TIMEOUT_SECONDS. Ignored by send().
+     *
+     * @param int $seconds
+     *
+     * @return self
+     */
+    public function withIdleTimeout(int $seconds): self
+    {
+        $clone = clone $this;
+        $clone->idleTimeoutSeconds = $seconds;
 
         return $clone;
     }
@@ -284,14 +312,7 @@ final class HttpRequest
      */
     public function send(): HttpResponse
     {
-        // Resolve effective headers and body.
-        $headers = $this->headers;
-        $body = $this->body;
-
-        if ($this->attachments !== []) {
-            ['body' => $body, 'contentType' => $contentType] = $this->buildMultipart();
-            $headers['Content-Type'] = $contentType;
-        }
+        ['headers' => $headers, 'body' => $body] = $this->resolvePayload();
 
         $transport = $this->transport;
         $method = $this->method;
@@ -354,6 +375,42 @@ final class HttpRequest
     }
 
     /**
+     * Open the request and return a stream once the response headers arrived.
+     *
+     * Headers, body and attachments are applied exactly as in send(). The
+     * body is read incrementally by iterating the returned HttpStream.
+     *
+     * Example:
+     *
+     *   $stream = Http::post($url)->withJson($payload)->withIdleTimeout(60)->stream();
+     *
+     * @return HttpStream
+     * @throws HttpClientException When the request cannot be streamed or the connection fails before headers.
+     */
+    public function stream(): HttpStream
+    {
+        if ($this->retryTimes > 0) {
+            throw new HttpClientException('stream() does not support retry(): a stream cannot be restarted after the first byte.');
+        }
+
+        if ($this->middleware !== []) {
+            throw new HttpClientException('stream() does not support withMiddleware(): middleware closures operate on a complete HttpResponse.');
+        }
+
+        if (!$this->transport instanceof StreamingTransportInterface) {
+            throw new HttpClientException(sprintf(
+                'Transport %s does not support streaming; it must implement %s.',
+                $this->transport::class,
+                StreamingTransportInterface::class,
+            ));
+        }
+
+        ['headers' => $headers, 'body' => $body] = $this->resolvePayload();
+
+        return $this->transport->stream($this->method, $this->url, $headers, $body, $this->idleTimeoutSeconds);
+    }
+
+    /**
      * Send and return the decoded JSON body.
      *
      * @return mixed
@@ -387,6 +444,24 @@ final class HttpRequest
     }
 
     // ─── Private helpers ──────────────────────────────────────────────────────
+
+    /**
+     * Resolve the effective headers and body, serialising attachments as multipart.
+     *
+     * @return array{headers: array<string, string>, body: string}
+     */
+    private function resolvePayload(): array
+    {
+        $headers = $this->headers;
+        $body = $this->body;
+
+        if ($this->attachments !== []) {
+            ['body' => $body, 'contentType' => $contentType] = $this->buildMultipart();
+            $headers['Content-Type'] = $contentType;
+        }
+
+        return ['headers' => $headers, 'body' => $body];
+    }
 
     /**
      * Build a multipart/form-data body from the current attachments.

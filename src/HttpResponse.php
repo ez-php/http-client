@@ -98,6 +98,16 @@ final readonly class HttpResponse
     }
 
     /**
+     * All response headers, names normalised to lowercase.
+     *
+     * @return array<string, string>
+     */
+    public function headers(): array
+    {
+        return $this->headers;
+    }
+
+    /**
      * Returns true when the status code indicates success (2xx).
      *
      * @return bool
