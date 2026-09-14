@@ -1,6 +1,6 @@
 {
   "name": "ez-php/http-client",
-  "version": "2.3.5",
+  "version": "2.3.6",
   "description": "HTTP client module for the ez-php framework — fluent cURL-based client for making outgoing HTTP requests",
   "type": "library",
   "license": "MIT",
