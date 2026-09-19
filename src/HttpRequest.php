@@ -51,6 +51,8 @@ final class HttpRequest
 
     private int $retrySleepMs = 0;
 
+    private ?Backoff $backoff = null;
+
     /**
      * @var (\Closure(HttpResponse): bool)|null
      */
@@ -302,6 +304,26 @@ final class HttpRequest
         return $clone;
     }
 
+    /**
+     * Wait according to a backoff strategy between retry attempts, instead of the fixed
+     * `$sleepMs` given to `retry()`. Has no effect unless `retry()` is also set.
+     *
+     * Example:
+     *
+     *   Http::get($url)->retry(5)->backoff(Backoff::exponential(baseMs: 200, maxMs: 10_000))->send();
+     *
+     * @param Backoff $backoff
+     *
+     * @return self
+     */
+    public function backoff(Backoff $backoff): self
+    {
+        $clone = clone $this;
+        $clone->backoff = $backoff;
+
+        return $clone;
+    }
+
     // ─── Dispatch ─────────────────────────────────────────────────────────────
 
     /**
@@ -343,8 +365,12 @@ final class HttpRequest
         $lastException = null;
 
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
-            if ($attempt > 0 && $this->retrySleepMs > 0) {
-                usleep($this->retrySleepMs * 1000);
+            if ($attempt > 0) {
+                $delayMs = $this->backoff !== null ? $this->backoff->delayMs($attempt) : $this->retrySleepMs;
+
+                if ($delayMs > 0) {
+                    usleep($delayMs * 1000);
+                }
             }
 
             try {
@@ -362,6 +388,9 @@ final class HttpRequest
                 }
 
                 return $response;
+            } catch (CircuitOpenException $e) {
+                // An open circuit stays open for seconds; retrying after milliseconds cannot help.
+                throw $e;
             } catch (HttpClientException $e) {
                 $lastException = $e;
 

@@ -148,6 +148,35 @@ $client = $app->make(HttpClient::class);
 $response = $client->get('https://api.example.com')->send();
 ```
 
+## Retry with backoff and a circuit breaker
+
+`retry()` waits a fixed time between attempts; attach a `Backoff` to grow it, with jitter so many clients do not retry in lock-step:
+
+```php
+use EzPhp\HttpClient\Backoff;
+
+Http::get($url)
+    ->retry(5)
+    ->backoff(Backoff::exponential(baseMs: 200, maxMs: 10_000))   // ≈ 200, 400, 800 … ms (each within [d/2, d])
+    ->send();
+```
+
+`Backoff::constant($ms)` waits the same every time; `exponential(..., jitter: false)` drops the randomisation. `backoff()` has no effect without `retry()`.
+
+To stop calling a service that keeps failing, wrap the transport in a `CircuitBreakerTransport` (needs `ez-php/cache`; use a store shared between processes, e.g. Redis or the file driver):
+
+```php
+$http = new HttpClient(new CircuitBreakerTransport(new CurlTransport(), $cache, failureThreshold: 5, openSeconds: 30));
+
+try {
+    $http->get('https://api.example.com/x')->send();
+} catch (CircuitOpenException $e) {
+    // failed fast — the service was not called; $e->retryAfterSeconds until a probe is allowed
+}
+```
+
+The circuit is per host. After `failureThreshold` failures (transport errors or 5xx) within `failureWindowSeconds` it opens for `openSeconds`; then one probe request decides whether it closes or stays open. 4xx responses never count. `retry()` does not retry a `CircuitOpenException`. Streams (`stream()`) need the undecorated transport.
+
 ## Testing
 
 The preferred way to test code that calls the `Http` façade is `Http::fake()` —
@@ -226,6 +255,8 @@ For streams, failures before the headers throw `HttpClientException` from `strea
 | `HttpRequest` | Fluent builder; clone-based withers; dispatch shortcuts (`send`, `json`, `body`, `status`); `attach()` for multipart uploads |
 | `HttpResponse` | Immutable value object: `status()`, `body()`, `json()`, `header()`, `ok()` |
 | `HttpClientException` | Thrown on transport-level failures (not on 4xx/5xx) |
+| `Backoff` | Delay strategy for `retry()`: `constant()`, `exponential()` with jitter |
+| `CircuitBreakerTransport` / `CircuitOpenException` | Per-host circuit breaker decorator (state in `ez-php/cache`); fail-fast exception |
 | `Http` | Static façade backed by a managed `HttpClient` singleton; `pool()`/`async()` for concurrency, `fake()`/`response()`/`assertSent()`/`assertNotSent()` for testing |
 | `HttpClientServiceProvider` | Binds transport + client; wires static façade; eager boot |
 

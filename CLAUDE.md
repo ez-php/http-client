@@ -257,6 +257,9 @@ src/
 ├── TransportInterface.php         — I/O seam: send(method, url, headers, body) → HttpResponse
 ├── CurlTransport.php              — cURL implementation; all curl_* calls are isolated here
 ├── FakeTransport.php              — Test double: returns pre-configured HttpResponse objects; records sent requests for assertions
+├── CircuitBreakerTransport.php    — TransportInterface decorator: per-host circuit (closed/open/half-open) with state in ez-php/cache (soft dependency)
+├── CircuitOpenException.php       — HttpClientException thrown instead of calling an open circuit; never retried by retry()
+├── Backoff.php                    — Delay strategy for retry(): constant() / exponential() with optional equal jitter
 ├── HttpClient.php                 — Entry point; factory methods returning a configured HttpRequest
 ├── HttpRequest.php                — Fluent builder for a pending request; dispatches via transport
 ├── HttpResponse.php               — Immutable value object wrapping the response (status, body, headers)
@@ -280,6 +283,9 @@ tests/
 ├── HttpResponseTest.php                  — Covers HttpResponse: status, body, json, header, ok
 ├── HttpTest.php                          — Covers Http façade: setClient, resetClient, lazy default client
 ├── HttpStreamTest.php                    — HttpStream accessors, iteration, body(), close hook, fake()
+├── RetryTest.php                         — retry(): default 5xx rule, custom condition, backoff() replacing the fixed sleep, CircuitOpenException never retried
+├── BackoffTest.php                       — constant/exponential delays, cap, multiplier, equal-jitter bounds, injected random source
+├── CircuitBreakerTransportTest.php       — closed→open→half-open→closed, failed probe, single probe under a held lock, failure window, per-host circuits, custom classification
 ├── CurlTransportStreamTest.php           — Real streamed transfers against a php -S loopback server
 ├── Support/stream-server.php             — Router for that server (one path per transfer behaviour)
 ├── Sse/SseDecoderTest.php                — Decoder spec cases; fixture split at every byte offset
@@ -443,6 +449,11 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **`curl_close()` is never called** — deprecated in PHP 8.5 and without effect since 8.0; `curl_multi_remove_handle()` + `curl_multi_close()` release the connection.
 
 ---
+- **`Backoff` is a separate value object attached with `HttpRequest::backoff()`, not an extra `retry()` parameter.** `retry(int $times, int $sleepMs = 100, ?Closure $when = null)` keeps its signature (a public API); `backoff()` is an additive clone-based wither that, when set, replaces the fixed `$sleepMs` between attempts and has no effect without `retry()`. Exponential backoff defaults to *equal jitter* (a random value in `[delay/2, delay]`): clients that failed together do not retry in lock-step, and the wait never collapses to ~0 the way full jitter can. The random source is injectable so tests are deterministic.
+- **The circuit breaker is a `TransportInterface` decorator, so it works for every request.** `CircuitBreakerTransport` wraps any transport (`new HttpClient(new CircuitBreakerTransport(new CurlTransport(), $cache))`). State lives in a `CacheInterface`, keyed per host by default (`keyResolver` overrides), so all PHP processes sharing the cache share the circuit. Closed → open after `failureThreshold` failures within `failureWindowSeconds`; open rejects for `openSeconds`; then half-open lets exactly one probe through (guarded by a cache lock — other callers still fail fast), which closes the circuit on success or re-opens it on failure. A failure is an `HttpClientException` or a 5xx response (`isFailure` overrides); 4xx never counts. The counter is a read-modify-write on the cache, so under heavy concurrency it is approximate — the breaker may trip a request or two early or late, which is acceptable for a protective mechanism.
+- **`CircuitOpenException` is an `HttpClientException` but is never retried.** Existing `catch (HttpClientException)` code keeps working, while `HttpRequest::retry()` rethrows it immediately: a circuit stays open for seconds, so retrying after milliseconds only burns the attempt budget.
+- **The wrapper does not implement `StreamingTransportInterface`.** Only `send()` is protected; `stream()` on a wrapped client fails with the existing "transport does not support streaming" error. Use the undecorated transport for streams (their failure modes are idle timeouts, not fast-failing connections).
+- **`ez-php/cache` is a soft dependency (`require-dev` + `suggest`).** Only `CircuitBreakerTransport` references it, and PSR-4 loads it only when used.
 
 ## Testing Approach
 
@@ -461,7 +472,8 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 | Incoming HTTP requests (server-side) | `ez-php/http` (`Request`, `RequestFactory`) |
 | Response caching | `ez-php/cache` or application layer |
 | Authentication for outgoing requests (OAuth, API key injection) | Application layer (configure via `withHeader()`) |
-| Retry logic / exponential backoff | Application layer or a decorator wrapping `TransportInterface` |
+| Retry policies beyond `retry()` + `Backoff` (honouring `Retry-After`, retry budgets, hedged requests) | Application layer or a decorator wrapping `TransportInterface` |
+| Bulkheads / adaptive concurrency limits | Application layer — the circuit breaker only trips on consecutive failures |
 | Total-elapsed-time budget across a retry sequence | Application layer — `withTimeout()` bounds each attempt, not the whole sequence |
 | Configurable connect timeout (`CURLOPT_CONNECTTIMEOUT`) | Not exposed; `send()` has only the total timeout, `stream()` a fixed 10 s connect timeout |
 | Event-loop / promise-based async (fibers, ReactPHP) | Out of scope — `Pool`/`PooledRequest` (`Http::async()`, `Http::pool()`) provide concurrency via `curl_multi_exec`, which is blocking-but-parallel, not an event loop |

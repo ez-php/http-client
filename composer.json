@@ -1,6 +1,6 @@
 {
   "name": "ez-php/http-client",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "description": "HTTP client module for the ez-php framework — fluent cURL-based client for making outgoing HTTP requests",
   "type": "library",
   "license": "MIT",
@@ -21,7 +21,11 @@
     "ext-curl": "*",
     "ez-php/contracts": "^2.0"
   },
+  "suggest": {
+    "ez-php/cache": "Needed for CircuitBreakerTransport (shared circuit state)"
+  },
   "require-dev": {
+    "ez-php/cache": "^2.0",
     "ez-php/docker": "^2.0",
     "ez-php/testing-application": "^2.0",
     "phpunit/phpunit": "^13.0",

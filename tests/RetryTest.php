@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests;
 
+use EzPhp\HttpClient\Backoff;
+use EzPhp\HttpClient\CircuitOpenException;
 use EzPhp\HttpClient\FakeTransport;
 use EzPhp\HttpClient\Http;
 use EzPhp\HttpClient\HttpClient;
@@ -253,5 +255,34 @@ final class RetryTest extends TestCase
 
         $this->assertSame(200, $response->status());
         $this->assertSame(3, $call);
+    }
+
+    public function test_backoff_replaces_the_fixed_sleep_between_attempts(): void
+    {
+        $transport = new RetrySequenceTransport([new HttpResponse(503, ''), new HttpResponse(503, ''), new HttpResponse(200, 'ok')]);
+        $delays = [];
+        $backoff = Backoff::exponential(baseMs: 2, maxMs: 8, jitter: true, random: static function (int $min, int $max) use (&$delays): int {
+            $delays[] = [$min, $max];
+
+            return $max;
+        });
+
+        $response = (new HttpRequest('GET', 'https://x.test', $transport))->retry(3, 5000)->backoff($backoff)->send();
+
+        self::assertSame(200, $response->status());
+        self::assertSame([[1, 2], [2, 4]], $delays);
+    }
+
+    public function test_an_open_circuit_is_not_retried(): void
+    {
+        $transport = new RetrySequenceTransport([new CircuitOpenException('api.test', 30), new HttpResponse(200, 'ok')]);
+
+        $this->expectException(CircuitOpenException::class);
+
+        try {
+            (new HttpRequest('GET', 'https://x.test', $transport))->retry(3, 0)->send();
+        } finally {
+            self::assertSame(1, $transport->getCallCount());
+        }
     }
 }
