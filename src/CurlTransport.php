@@ -66,7 +66,7 @@ final class CurlTransport implements StreamingTransportInterface
 
         $rawHeaders = substr($result, 0, $headerSize);
         $responseBody = substr($result, $headerSize);
-        $parsedHeaders = $this->parseHeaders($rawHeaders);
+        $parsedHeaders = CurlHeaders::parse($rawHeaders);
 
         return new HttpResponse($statusCode, $responseBody, $parsedHeaders);
     }
@@ -190,7 +190,7 @@ final class CurlTransport implements StreamingTransportInterface
 
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $upperMethod);
-        curl_setopt($ch, CURLOPT_HTTPHEADER, $this->formatHeaders($headers));
+        curl_setopt($ch, CURLOPT_HTTPHEADER, CurlHeaders::format($headers));
         curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
 
         if ($body !== '') {
@@ -198,56 +198,5 @@ final class CurlTransport implements StreamingTransportInterface
         }
 
         return $ch;
-    }
-
-    /**
-     * Convert an associative headers array to the "Name: value" format curl expects.
-     *
-     * @param array<string, string> $headers
-     *
-     * @return list<string>
-     */
-    private function formatHeaders(array $headers): array
-    {
-        $formatted = [];
-
-        foreach ($headers as $name => $value) {
-            $formatted[] = $name . ': ' . $value;
-        }
-
-        return $formatted;
-    }
-
-    /**
-     * Parse the raw header block into an associative array.
-     * Header names are normalised to lowercase.
-     * When redirects occur, only the last header block is kept.
-     *
-     * @param string $rawHeaders
-     *
-     * @return array<string, string>
-     */
-    private function parseHeaders(string $rawHeaders): array
-    {
-        // Split on double CRLF to separate redirect blocks; use the final block.
-        $blocks = array_filter(array_map('trim', explode("\r\n\r\n", $rawHeaders)));
-        $lastBlock = end($blocks);
-
-        if ($lastBlock === false) {
-            return [];
-        }
-
-        $parsed = [];
-
-        foreach (explode("\r\n", $lastBlock) as $line) {
-            if (!str_contains($line, ':')) {
-                continue;
-            }
-
-            [$name, $value] = explode(':', $line, 2);
-            $parsed[strtolower(trim($name))] = trim($value);
-        }
-
-        return $parsed;
     }
 }

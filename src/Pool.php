@@ -233,7 +233,7 @@ final class Pool
             curl_setopt($ch, CURLOPT_HEADER, true);
             curl_setopt($ch, CURLOPT_TIMEOUT, $req->getTimeoutSeconds() ?? self::TIMEOUT_SECONDS);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
-            curl_setopt($ch, CURLOPT_HTTPHEADER, $this->formatHeaders($headers));
+            curl_setopt($ch, CURLOPT_HTTPHEADER, CurlHeaders::format($headers));
             curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
 
             if ($body !== '') {
@@ -253,14 +253,34 @@ final class Pool
             }
         } while ($running > 0 && $status === CURLM_OK);
 
+        // curl_multi_getcontent() returns '' (not null) for a failed transfer, so
+        // per-handle results must be read from the multi handle's message queue.
+        /** @var array<int, int> $results spl_object_id(handle) => CURLE_* code */
+        $results = [];
+
+        while (($info = curl_multi_info_read($mh)) !== false) {
+            if ($info['msg'] === CURLMSG_DONE) {
+                $results[spl_object_id($info['handle'])] = $info['result'];
+            }
+        }
+
         $responses = [];
 
         foreach ($handles as $ch) {
+            $code = $results[spl_object_id($ch)] ?? null;
             $result = curl_multi_getcontent($ch);
 
-            if ($result === null) {
+            if ($code !== CURLE_OK || $result === null) {
                 $error = curl_error($ch);
-                curl_multi_remove_handle($mh, $ch);
+
+                if ($error === '') {
+                    $error = $code === null ? 'transfer did not complete' : curl_strerror($code);
+                }
+
+                foreach ($handles as $handle) {
+                    curl_multi_remove_handle($mh, $handle);
+                }
+
                 curl_multi_close($mh);
                 throw new HttpClientException('cURL error: ' . $error);
             }
@@ -274,7 +294,7 @@ final class Pool
             $rawHeaders = substr($result, 0, $headerSize);
             $body = substr($result, $headerSize);
 
-            $responses[] = new HttpResponse($statusCode, $body, $this->parseHeaders($rawHeaders));
+            $responses[] = new HttpResponse($statusCode, $body, CurlHeaders::parse($rawHeaders));
 
             curl_multi_remove_handle($mh, $ch);
         }
@@ -282,55 +302,5 @@ final class Pool
         curl_multi_close($mh);
 
         return $responses;
-    }
-
-    /**
-     * Convert an associative headers array to the "Name: value" format curl expects.
-     *
-     * @param array<string, string> $headers
-     *
-     * @return list<string>
-     */
-    private function formatHeaders(array $headers): array
-    {
-        $formatted = [];
-
-        foreach ($headers as $name => $value) {
-            $formatted[] = $name . ': ' . $value;
-        }
-
-        return $formatted;
-    }
-
-    /**
-     * Parse the raw header block into an associative array.
-     * Header names are normalised to lowercase.
-     * When redirects occur, only the last header block is kept.
-     *
-     * @param string $rawHeaders
-     *
-     * @return array<string, string>
-     */
-    private function parseHeaders(string $rawHeaders): array
-    {
-        $blocks = array_filter(array_map('trim', explode("\r\n\r\n", $rawHeaders)));
-        $lastBlock = end($blocks);
-
-        if ($lastBlock === false) {
-            return [];
-        }
-
-        $parsed = [];
-
-        foreach (explode("\r\n", $lastBlock) as $line) {
-            if (!str_contains($line, ':')) {
-                continue;
-            }
-
-            [$name, $value] = explode(':', $line, 2);
-            $parsed[strtolower(trim($name))] = trim($value);
-        }
-
-        return $parsed;
     }
 }

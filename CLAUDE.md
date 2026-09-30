@@ -281,6 +281,7 @@ src/
 ├── HttpClient.php                 — Entry point; factory methods returning a configured HttpRequest
 ├── HttpRequest.php                — Fluent builder for a pending request; dispatches via transport
 ├── RequestHeaders.php             — @internal: case-insensitive header set/merge for HttpRequest and PooledRequest
+├── CurlHeaders.php                — @internal: request-header formatting and redirect-aware response-header parsing shared by CurlTransport and Pool
 ├── HttpResponse.php               — Immutable value object wrapping the response (status, body, headers)
 ├── HttpClientException.php        — Thrown on transport failures (not on 4xx/5xx responses)
 ├── StreamingTransportInterface.php — Extends TransportInterface with stream() → HttpStream
@@ -298,6 +299,7 @@ src/
 tests/
 ├── TestCase.php                          — Base PHPUnit test case
 ├── HttpClientTest.php                    — Covers HttpClient factory methods using a fake transport
+├── CurlHeadersTest.php                   — format/parse, redirect blocks keep only the final header block
 ├── HttpRequestTest.php                   — Covers HttpRequest builder: withHeaders, withJson, withForm, send shortcuts
 ├── HttpResponseTest.php                  — Covers HttpResponse: status, body, json, header, ok
 ├── HttpTest.php                          — Covers Http façade: setClient, resetClient, lazy default client
@@ -467,6 +469,7 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **`stream()` rejects `retry()` and `withMiddleware()`** — a stream cannot restart after its first byte, and middleware closures are typed for a complete `HttpResponse`. Throwing is explicit; silently ignoring them would not be.
 - **`HttpClientException` is not final** — `HttpStreamException` extends it so one `catch (HttpClientException)` still covers every transport failure.
 - **`curl_close()` is never called** — deprecated in PHP 8.5 and without effect since 8.0; `curl_multi_remove_handle()` + `curl_multi_close()` release the connection.
+- **`Pool` reads per-handle results from `curl_multi_info_read()`** — with `CURLOPT_RETURNTRANSFER`, `curl_multi_getcontent()` returns `''` (never `null`) for a refused/timed-out/unresolvable transfer, so checking its return value alone would turn a failure into `HttpResponse(0, '')`. Any non-`CURLE_OK` handle makes `execute()` throw `HttpClientException`, matching `CurlTransport::send()`.
 
 ---
 - **`Retry-After` is opt-in via `respectRetryAfter(maxMs)`.** When the response that triggers a retry carries the header, its wait (parsed by `@internal` `RetryAfter`: delay-seconds or IMF-fixdate HTTP-date, past dates = 0) replaces the backoff/fixed delay for that retry, capped at `maxMs` (default 60 s) so a hostile or broken server can't park the client. Without a custom `$when`, enabling it also makes 429 retryable — providers send `Retry-After` on 429 (OpenAI, Anthropic), and a retry that ignores 429 would never see it. Off by default so existing `retry()` behaviour is unchanged.
@@ -475,7 +478,7 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **`CircuitOpenException` is an `HttpClientException` but is never retried.** Existing `catch (HttpClientException)` code keeps working, while `HttpRequest::retry()` rethrows it immediately: a circuit stays open for seconds, so retrying after milliseconds only burns the attempt budget.
 - **The wrapper does not implement `StreamingTransportInterface`.** Only `send()` is protected; `stream()` on a wrapped client fails with the existing "transport does not support streaming" error. Use the undecorated transport for streams (their failure modes are idle timeouts, not fast-failing connections).
 - **`ez-php/cache` is a soft dependency (`require-dev` + `suggest`).** Only `CircuitBreakerTransport` references it, and PSR-4 loads it only when used.
-- **`Http` facade builds its own default client** — when no client has been set, `Http::getClient()` creates `new HttpClient(new CurlTransport())` so the façade works without a service provider (scripts, tests). This is the one façade that instantiates a collaborator itself; it is intentional because the module has no required configuration. Use `Http::fake()` in tests.
+- **`Http` facade builds its own default client** — when no client has been set, `Http::getClient()` creates `new HttpClient(new CurlTransport())` so the façade works without a service provider (scripts, tests). Together with `ez-php/events`' `Event::getDispatcher()` (which lazily does `new EventDispatcher()`), this is one of the two façades that instantiate a collaborator themselves; every other façade (`Cache`, `Mail`, `Flag`, `Metrics`, `RateLimiter`, `Log`, `Storage`, `Ai`, …) throws when its provider has not wired it. It is intentional here because the module has no required configuration. Use `Http::fake()` in tests.
 
 ## Testing Approach
 

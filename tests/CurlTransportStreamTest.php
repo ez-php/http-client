@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace Tests\HttpClient;
 
+use EzPhp\HttpClient\CurlHeaders;
 use EzPhp\HttpClient\CurlStreamHandle;
 use EzPhp\HttpClient\CurlTransport;
 use EzPhp\HttpClient\HttpClientException;
@@ -24,6 +25,7 @@ use Tests\TestCase;
  *
  * @package Tests\HttpClient
  */
+#[UsesClass(CurlHeaders::class)]
 #[CoversClass(CurlTransport::class)]
 #[CoversClass(CurlStreamHandle::class)]
 #[UsesClass(HttpStream::class)]

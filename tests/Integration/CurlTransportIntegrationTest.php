@@ -4,10 +4,12 @@ declare(strict_types=1);
 
 namespace Tests\Integration;
 
+use EzPhp\HttpClient\CurlHeaders;
 use EzPhp\HttpClient\CurlTransport;
 use EzPhp\HttpClient\HttpClientException;
 use PHPUnit\Framework\Attributes\CoversClass;
 use PHPUnit\Framework\Attributes\Group;
+use PHPUnit\Framework\Attributes\UsesClass;
 use Tests\TestCase;
 
 /**
@@ -24,6 +26,7 @@ use Tests\TestCase;
  *
  * @package Tests\Integration
  */
+#[UsesClass(CurlHeaders::class)]
 #[CoversClass(CurlTransport::class)]
 #[Group('integration')]
 final class CurlTransportIntegrationTest extends TestCase

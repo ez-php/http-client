@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace Tests;
 
+use EzPhp\HttpClient\CurlHeaders;
+use EzPhp\HttpClient\CurlTransport;
 use EzPhp\HttpClient\FakeTransport;
 use EzPhp\HttpClient\Http;
 use EzPhp\HttpClient\HttpClient;
@@ -22,12 +24,15 @@ use PHPUnit\Framework\Attributes\UsesClass;
  *
  * @package Tests
  */
+#[UsesClass(CurlHeaders::class)]
 #[CoversClass(Pool::class)]
 #[CoversClass(PooledRequest::class)]
 #[CoversClass(Http::class)]
 #[UsesClass(HttpClient::class)]
 #[UsesClass(HttpResponse::class)]
 #[UsesClass(FakeTransport::class)]
+#[UsesClass(CurlTransport::class)]
+#[UsesClass(HttpClientException::class)]
 final class PoolTest extends TestCase
 {
     protected function setUp(): void
@@ -309,6 +314,31 @@ final class PoolTest extends TestCase
         ]);
 
         $this->assertSame(2, $callCount);
+    }
+
+    // ─── Pool uses curl_multi for CurlTransport ──────────────────────────────
+
+    /**
+     * A refused connection must throw like CurlTransport::send() does, not
+     * resolve to an empty HttpResponse(0, '').
+     *
+     * @return void
+     */
+    public function test_pool_concurrent_path_throws_on_failed_transfer(): void
+    {
+        $server = stream_socket_server('tcp://127.0.0.1:0');
+        $this->assertNotFalse($server);
+        $address = (string) stream_socket_get_name($server, false);
+        fclose($server); // nothing listens on the port any more → connection refused
+
+        $pool = new Pool(new CurlTransport());
+
+        $this->expectException(HttpClientException::class);
+        $this->expectExceptionMessage('cURL error:');
+
+        $pool->execute([
+            (new PooledRequest('GET', 'http://' . $address . '/'))->withTimeout(5),
+        ]);
     }
 
     // ─── PooledRequest timeout ───────────────────────────────────────────────
