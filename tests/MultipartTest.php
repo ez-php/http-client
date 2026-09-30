@@ -89,6 +89,23 @@ final class MultipartTest extends TestCase
     /**
      * @return void
      */
+    public function test_attach_replaces_content_type_set_in_other_case(): void
+    {
+        $spy = new MultipartCaptureTransport();
+        $client = new HttpClient($spy);
+
+        $client->post('https://api.example.com/upload')
+            ->withHeader('content-type', 'application/json')
+            ->attach('file', 'contents', 'report.pdf', 'application/pdf')
+            ->send();
+
+        $this->assertArrayNotHasKey('content-type', $spy->capturedHeaders);
+        $this->assertStringStartsWith('multipart/form-data; boundary=', $spy->capturedHeaders['Content-Type']);
+    }
+
+    /**
+     * @return void
+     */
     public function test_attach_body_contains_field_name(): void
     {
         $spy = new MultipartCaptureTransport();

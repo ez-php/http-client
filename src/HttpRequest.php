@@ -59,6 +59,11 @@ final class HttpRequest
     private ?\Closure $retryWhen = null;
 
     /**
+     * Upper bound for a Retry-After wait; null = Retry-After is ignored.
+     */
+    private ?int $retryAfterMaxMs = null;
+
+    /**
      * HttpRequest Constructor
      *
      * @param string             $method
@@ -84,7 +89,7 @@ final class HttpRequest
     public function withHeaders(array $headers): self
     {
         $clone = clone($this, [
-            'headers' => array_merge($this->headers, $headers),
+            'headers' => RequestHeaders::merge($this->headers, $headers),
         ]);
 
         return $clone;
@@ -101,7 +106,7 @@ final class HttpRequest
     public function withHeader(string $name, string $value): self
     {
         $clone = clone $this;
-        $clone->headers[$name] = $value;
+        $clone->headers = RequestHeaders::set($clone->headers, $name, $value);
 
         return $clone;
     }
@@ -135,7 +140,7 @@ final class HttpRequest
     {
         $clone = clone $this;
         $clone->body = (string) json_encode($data);
-        $clone->headers['Content-Type'] = 'application/json';
+        $clone->headers = RequestHeaders::set($clone->headers, 'Content-Type', 'application/json');
 
         return $clone;
     }
@@ -151,7 +156,7 @@ final class HttpRequest
     {
         $clone = clone $this;
         $clone->body = http_build_query($data);
-        $clone->headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        $clone->headers = RequestHeaders::set($clone->headers, 'Content-Type', 'application/x-www-form-urlencoded');
 
         return $clone;
     }
@@ -324,6 +329,31 @@ final class HttpRequest
         return $clone;
     }
 
+    /**
+     * Honour the `Retry-After` header of a response that triggers a retry.
+     *
+     * When the header is present (delay-seconds or HTTP-date), its wait replaces the
+     * backoff/fixed delay for that retry, capped at `$maxMs`; without it the normal
+     * delay applies. Without a custom `$when` on `retry()`, 429 Too Many Requests is
+     * retried too (in addition to 5xx), since that is where Retry-After usually comes
+     * from. Has no effect unless `retry()` is also set.
+     *
+     * Example:
+     *
+     *   Http::post($url)->retry(3)->backoff(Backoff::exponential())->respectRetryAfter(maxMs: 30_000)->send();
+     *
+     * @param int $maxMs Longest wait taken from a Retry-After header.
+     *
+     * @return self
+     */
+    public function respectRetryAfter(int $maxMs = 60_000): self
+    {
+        $clone = clone $this;
+        $clone->retryAfterMaxMs = max(0, $maxMs);
+
+        return $clone;
+    }
+
     // ─── Dispatch ─────────────────────────────────────────────────────────────
 
     /**
@@ -363,10 +393,13 @@ final class HttpRequest
         // Execute with retry.
         $maxAttempts = $this->retryTimes + 1;
         $lastException = null;
+        $retryAfterMs = null;
 
         for ($attempt = 0; $attempt < $maxAttempts; $attempt++) {
             if ($attempt > 0) {
-                $delayMs = $this->backoff !== null ? $this->backoff->delayMs($attempt) : $this->retrySleepMs;
+                $delayMs = $retryAfterMs
+                    ?? ($this->backoff !== null ? $this->backoff->delayMs($attempt) : $this->retrySleepMs);
+                $retryAfterMs = null;
 
                 if ($delayMs > 0) {
                     usleep($delayMs * 1000);
@@ -380,9 +413,13 @@ final class HttpRequest
 
                 if (!$isLastAttempt) {
                     $when = $this->retryWhen;
-                    $shouldRetry = $when !== null ? $when($response) : $response->status() >= 500;
+                    $shouldRetry = $when !== null
+                        ? $when($response)
+                        : $response->status() >= 500 || ($this->retryAfterMaxMs !== null && $response->status() === 429);
 
                     if ($shouldRetry) {
+                        $retryAfterMs = $this->retryAfterDelay($response);
+
                         continue;
                     }
                 }
@@ -401,6 +438,24 @@ final class HttpRequest
         }
 
         throw $lastException ?? new HttpClientException('All retry attempts exhausted.');
+    }
+
+    /**
+     * The capped Retry-After wait of $response, or null when disabled or absent.
+     *
+     * @param HttpResponse $response
+     *
+     * @return int|null
+     */
+    private function retryAfterDelay(HttpResponse $response): ?int
+    {
+        if ($this->retryAfterMaxMs === null) {
+            return null;
+        }
+
+        $delay = RetryAfter::delayMs($response->header('Retry-After'), time());
+
+        return $delay === null ? null : min($delay, $this->retryAfterMaxMs);
     }
 
     /**
@@ -486,7 +541,7 @@ final class HttpRequest
 
         if ($this->attachments !== []) {
             ['body' => $body, 'contentType' => $contentType] = $this->buildMultipart();
-            $headers['Content-Type'] = $contentType;
+            $headers = RequestHeaders::set($headers, 'Content-Type', $contentType);
         }
 
         return ['headers' => $headers, 'body' => $body];

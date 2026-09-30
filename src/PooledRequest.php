@@ -50,7 +50,7 @@ final class PooledRequest
     public function withHeaders(array $headers): self
     {
         $clone = clone $this;
-        $clone->headers = array_merge($this->headers, $headers);
+        $clone->headers = RequestHeaders::merge($this->headers, $headers);
 
         return $clone;
     }
@@ -66,7 +66,7 @@ final class PooledRequest
     public function withHeader(string $name, string $value): self
     {
         $clone = clone $this;
-        $clone->headers[$name] = $value;
+        $clone->headers = RequestHeaders::set($clone->headers, $name, $value);
 
         return $clone;
     }
@@ -97,7 +97,7 @@ final class PooledRequest
     {
         $clone = clone $this;
         $clone->body = (string) json_encode($data);
-        $clone->headers['Content-Type'] = 'application/json';
+        $clone->headers = RequestHeaders::set($clone->headers, 'Content-Type', 'application/json');
 
         return $clone;
     }
@@ -113,7 +113,7 @@ final class PooledRequest
     {
         $clone = clone $this;
         $clone->body = http_build_query($data);
-        $clone->headers['Content-Type'] = 'application/x-www-form-urlencoded';
+        $clone->headers = RequestHeaders::set($clone->headers, 'Content-Type', 'application/x-www-form-urlencoded');
 
         return $clone;
     }

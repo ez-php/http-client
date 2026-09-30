@@ -28,10 +28,11 @@ docker compose exec app composer full
 Executes in order:
 1. `sync_guidelines.php --check` — fails if any `CLAUDE.md` has drifted from this file
 2. `check_test_classes.php` — fails on a duplicate test class name (all packages share the `Tests\` namespace, so a collision is a fatal error in the aggregated run, not a test failure)
-3. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
-4. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
+3. `check_module_deps.php` — fails when a package's code imports an ez-php package its `composer.json` does not declare (module `src`: `require`/`suggest`; tests: `require`/`require-dev` and their dependencies), or requires one it never uses
+4. `phpstan analyse` — static analysis, level 9, config: `phpstan.neon`
+5. `php-cs-fixer fix` — auto-fixes style (`@PSR12` + `@PHP83Migration` + strict rules)
    *(Note: `@PHP85Migration` does not exist yet in php-cs-fixer; `@PHP83Migration` is the highest available and is used intentionally even though the project targets PHP 8.5)*
-5. `phpunit` — all tests with coverage
+6. `phpunit` — all tests with coverage
 
 Individual commands when needed:
 ```
@@ -40,6 +41,7 @@ composer cs                  # CS Fixer only
 composer test                # PHPUnit only
 composer guidelines:check    # CLAUDE.md drift only
 composer test-classes:check  # duplicate test class names only
+composer module-deps:check   # undeclared / unused ez-php package dependencies only
 ```
 
 **PHPStan:** never suppress with `@phpstan-ignore-line` — always fix the root cause.
@@ -198,20 +200,22 @@ vendor/bin/docker-init
 
 This copies `Dockerfile`, `docker-compose.yml`, `.env.example`, `start.sh`, and `docker/` into the module, replacing `{{MODULE_NAME}}` placeholders. Existing files are never overwritten.
 
-Pass `--services` to merge MySQL/Redis/Meilisearch service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
+Pass `--services` to merge MySQL/Redis/Meilisearch/Memcached/Mailpit service definitions directly into `docker-compose.yml` and uncomment the matching sections in `.env.example`, instead of adapting them by hand afterward:
 
 ```
 vendor/bin/docker-init --services=mysql
 vendor/bin/docker-init --services=redis
 vendor/bin/docker-init --services=meilisearch
 vendor/bin/docker-init --services=mysql,redis
+vendor/bin/docker-init --services=memcached,mailpit
 ```
 
-Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`:
+Pass `--extensions` to merge PHP extension install blocks (apt packages plus `docker-php-ext-install`/`pecl` lines) directly into `docker/app/Dockerfile`, instead of hand-editing it afterward — supported extensions: `bcmath`, `gmp`, `gd`, `imagick`, `memcached`, `apcu` (with `apc.enable_cli=1`):
 
 ```
 vendor/bin/docker-init --extensions=gmp,bcmath
 vendor/bin/docker-init --extensions=gd,imagick
+vendor/bin/docker-init --extensions=memcached,apcu
 ```
 
 When run from a module directory inside this monorepo, any requested extension not already present is also merged into the shared root `docker/app/Dockerfile` — the container `composer full` at the root actually runs against, distinct from the module's own standalone image.
@@ -273,8 +277,10 @@ src/
 ├── CircuitBreakerTransport.php    — TransportInterface decorator: per-host circuit (closed/open/half-open) with state in ez-php/cache (soft dependency)
 ├── CircuitOpenException.php       — HttpClientException thrown instead of calling an open circuit; never retried by retry()
 ├── Backoff.php                    — Delay strategy for retry(): constant() / exponential() with optional equal jitter
+├── RetryAfter.php                 — @internal: parses a Retry-After header (seconds or HTTP-date) into milliseconds
 ├── HttpClient.php                 — Entry point; factory methods returning a configured HttpRequest
 ├── HttpRequest.php                — Fluent builder for a pending request; dispatches via transport
+├── RequestHeaders.php             — @internal: case-insensitive header set/merge for HttpRequest and PooledRequest
 ├── HttpResponse.php               — Immutable value object wrapping the response (status, body, headers)
 ├── HttpClientException.php        — Thrown on transport failures (not on 4xx/5xx responses)
 ├── StreamingTransportInterface.php — Extends TransportInterface with stream() → HttpStream
@@ -297,6 +303,7 @@ tests/
 ├── HttpTest.php                          — Covers Http façade: setClient, resetClient, lazy default client
 ├── HttpStreamTest.php                    — HttpStream accessors, iteration, body(), close hook, fake()
 ├── RetryTest.php                         — retry(): default 5xx rule, custom condition, backoff() replacing the fixed sleep, CircuitOpenException never retried
+├── RetryAfterTest.php                    — RetryAfter parsing (seconds, HTTP-date, invalid); respectRetryAfter() preferring the header over backoff, the cap, 429 retry
 ├── BackoffTest.php                       — constant/exponential delays, cap, multiplier, equal-jitter bounds, injected random source
 ├── CircuitBreakerTransportTest.php       — closed→open→half-open→closed, failed probe, single probe under a held lock, failure window, per-host circuits, custom classification
 ├── CurlTransportStreamTest.php           — Real streamed transfers against a php -S loopback server
@@ -462,6 +469,7 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **`curl_close()` is never called** — deprecated in PHP 8.5 and without effect since 8.0; `curl_multi_remove_handle()` + `curl_multi_close()` release the connection.
 
 ---
+- **`Retry-After` is opt-in via `respectRetryAfter(maxMs)`.** When the response that triggers a retry carries the header, its wait (parsed by `@internal` `RetryAfter`: delay-seconds or IMF-fixdate HTTP-date, past dates = 0) replaces the backoff/fixed delay for that retry, capped at `maxMs` (default 60 s) so a hostile or broken server can't park the client. Without a custom `$when`, enabling it also makes 429 retryable — providers send `Retry-After` on 429 (OpenAI, Anthropic), and a retry that ignores 429 would never see it. Off by default so existing `retry()` behaviour is unchanged.
 - **`Backoff` is a separate value object attached with `HttpRequest::backoff()`, not an extra `retry()` parameter.** `retry(int $times, int $sleepMs = 100, ?Closure $when = null)` keeps its signature (a public API); `backoff()` is an additive clone-based wither that, when set, replaces the fixed `$sleepMs` between attempts and has no effect without `retry()`. Exponential backoff defaults to *equal jitter* (a random value in `[delay/2, delay]`): clients that failed together do not retry in lock-step, and the wait never collapses to ~0 the way full jitter can. The random source is injectable so tests are deterministic.
 - **The circuit breaker is a `TransportInterface` decorator, so it works for every request.** `CircuitBreakerTransport` wraps any transport (`new HttpClient(new CircuitBreakerTransport(new CurlTransport(), $cache))`). State lives in a `CacheInterface`, keyed per host by default (`keyResolver` overrides), so all PHP processes sharing the cache share the circuit. Closed → open after `failureThreshold` failures within `failureWindowSeconds`; open rejects for `openSeconds`; then half-open lets exactly one probe through (guarded by a cache lock — other callers still fail fast), which closes the circuit on success or re-opens it on failure. A failure is an `HttpClientException` or a 5xx response (`isFailure` overrides); 4xx never counts. The counter is a read-modify-write on the cache, so under heavy concurrency it is approximate — the breaker may trip a request or two early or late, which is acceptable for a protective mechanism.
 - **`CircuitOpenException` is an `HttpClientException` but is never retried.** Existing `catch (HttpClientException)` code keeps working, while `HttpRequest::retry()` rethrows it immediately: a circuit stays open for seconds, so retrying after milliseconds only burns the attempt budget.
@@ -486,7 +494,7 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 | Incoming HTTP requests (server-side) | `ez-php/http` (`Request`, `RequestFactory`) |
 | Response caching | `ez-php/cache` or application layer |
 | Authentication for outgoing requests (OAuth, API key injection) | Application layer (configure via `withHeader()`) |
-| Retry policies beyond `retry()` + `Backoff` (honouring `Retry-After`, retry budgets, hedged requests) | Application layer or a decorator wrapping `TransportInterface` |
+| Retry policies beyond `retry()` + `Backoff` + `respectRetryAfter()` (retry budgets, hedged requests) | Application layer or a decorator wrapping `TransportInterface` |
 | Bulkheads / adaptive concurrency limits | Application layer — the circuit breaker only trips on consecutive failures |
 | Total-elapsed-time budget across a retry sequence | Application layer — `withTimeout()` bounds each attempt, not the whole sequence |
 | Configurable connect timeout (`CURLOPT_CONNECTTIMEOUT`) | Not exposed; `send()` has only the total timeout, `stream()` a fixed 10 s connect timeout |

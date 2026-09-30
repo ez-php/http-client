@@ -163,6 +163,18 @@ Http::get($url)
 
 `Backoff::constant($ms)` waits the same every time; `exponential(..., jitter: false)` drops the randomisation. `backoff()` has no effect without `retry()`.
 
+`respectRetryAfter()` makes the retry honour the server's `Retry-After` header (delay-seconds or
+an HTTP date) instead of the backoff delay, capped at `maxMs`, and — unless you pass your own
+`$when` to `retry()` — also retries 429 Too Many Requests:
+
+```php
+Http::post('https://api.openai.com/v1/chat/completions')
+    ->retry(3)
+    ->backoff(Backoff::exponential())   // used when a response has no Retry-After
+    ->respectRetryAfter(maxMs: 30_000)
+    ->send();
+```
+
 To stop calling a service that keeps failing, wrap the transport in a `CircuitBreakerTransport` (needs `ez-php/cache`; use a store shared between processes, e.g. Redis or the file driver):
 
 ```php

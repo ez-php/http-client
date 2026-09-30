@@ -70,6 +70,19 @@ final class PoolTest extends TestCase
     /**
      * @return void
      */
+    public function test_pooled_request_headers_replace_case_insensitively(): void
+    {
+        $req = (new PooledRequest('POST', 'https://api.example.com/users'))
+            ->withHeaders(['content-type' => 'text/plain', 'x-id' => '1'])
+            ->withHeader('X-Id', '2')
+            ->withForm(['name' => 'Alice']);
+
+        $this->assertSame(['X-Id' => '2', 'Content-Type' => 'application/x-www-form-urlencoded'], $req->getHeaders());
+    }
+
+    /**
+     * @return void
+     */
     public function test_pooled_request_response_throws_before_execution(): void
     {
         $req = new PooledRequest('GET', 'https://api.example.com');

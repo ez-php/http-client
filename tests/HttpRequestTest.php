@@ -264,6 +264,35 @@ final class HttpRequestTest extends TestCase
         $this->assertSame('application/json', $spy->headers['Content-Type']);
     }
 
+    /**
+     * @return void
+     */
+    public function test_with_json_replaces_content_type_set_in_other_case(): void
+    {
+        $spy = new HttpRequestTransportSpy();
+        (new HttpRequest('POST', 'https://example.com', $spy))
+            ->withHeader('content-type', 'text/plain')
+            ->withJson(['name' => 'Alice'])
+            ->send();
+
+        $this->assertSame(['Content-Type' => 'application/json'], $spy->headers);
+    }
+
+    /**
+     * @return void
+     */
+    public function test_with_header_replaces_existing_header_case_insensitively(): void
+    {
+        $spy = new HttpRequestTransportSpy();
+        (new HttpRequest('GET', 'https://example.com', $spy))
+            ->withHeaders(['X-Api-Key' => 'old', 'accept' => 'text/html'])
+            ->withHeader('x-api-key', 'new')
+            ->withHeaders(['Accept' => 'application/json'])
+            ->send();
+
+        $this->assertSame(['x-api-key' => 'new', 'Accept' => 'application/json'], $spy->headers);
+    }
+
     // ─── withForm ────────────────────────────────────────────────────────────
 
     /**
