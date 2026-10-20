@@ -16,7 +16,7 @@ use Generator;
  *
  * @package EzPhp\HttpClient
  */
-final class CurlTransport implements StreamingTransportInterface
+final class CurlTransport implements StreamingTransportInterface, ConnectTimeoutTransportInterface
 {
     /**
      * Fallback timeout used when the caller does not supply one.
@@ -27,6 +27,27 @@ final class CurlTransport implements StreamingTransportInterface
      * Connect timeout for streamed requests, which have no total timeout.
      */
     public const int CONNECT_TIMEOUT_SECONDS = 10;
+
+    /**
+     * Connect timeout set via withConnectTimeout(); null = send() leaves cURL's
+     * default, stream() uses CONNECT_TIMEOUT_SECONDS.
+     */
+    private ?int $connectTimeoutSeconds = null;
+
+    /**
+     * Return a copy that bounds the connection phase of send() and stream().
+     *
+     * @param int $seconds
+     *
+     * @return self
+     */
+    public function withConnectTimeout(int $seconds): self
+    {
+        $clone = clone $this;
+        $clone->connectTimeoutSeconds = $seconds;
+
+        return $clone;
+    }
 
     /**
      * @param string                $method
@@ -50,6 +71,10 @@ final class CurlTransport implements StreamingTransportInterface
         curl_setopt($ch, CURLOPT_RETURNTRANSFER, true);
         curl_setopt($ch, CURLOPT_HEADER, true);
         curl_setopt($ch, CURLOPT_TIMEOUT, $timeoutSeconds ?? self::TIMEOUT_SECONDS);
+
+        if ($this->connectTimeoutSeconds !== null) {
+            curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->connectTimeoutSeconds);
+        }
 
         $result = curl_exec($ch);
 
@@ -75,7 +100,8 @@ final class CurlTransport implements StreamingTransportInterface
      * Open the request and return once the final response headers arrived.
      *
      * No total timeout applies: the transfer fails only when nothing arrives
-     * for $idleTimeoutSeconds (or the connect phase exceeds CONNECT_TIMEOUT_SECONDS).
+     * for $idleTimeoutSeconds (or the connect phase exceeds the connect timeout:
+     * withConnectTimeout(), else CONNECT_TIMEOUT_SECONDS).
      *
      * @param string                $method
      * @param string                $url
@@ -96,7 +122,7 @@ final class CurlTransport implements StreamingTransportInterface
         $ch = $this->createHandle($method, $url, $headers, $body);
 
         curl_setopt($ch, CURLOPT_TIMEOUT, 0);
-        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, self::CONNECT_TIMEOUT_SECONDS);
+        curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->connectTimeoutSeconds ?? self::CONNECT_TIMEOUT_SECONDS);
 
         $handle = new CurlStreamHandle($ch);
 

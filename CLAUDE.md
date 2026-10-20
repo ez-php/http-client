@@ -273,8 +273,9 @@ Fluent cURL HTTP client for outgoing requests.
 ```
 src/
 ├── TransportInterface.php         — I/O seam: send(method, url, headers, body) → HttpResponse
+├── ConnectTimeoutTransportInterface.php — optional capability: withConnectTimeout(seconds) → transport; used by HttpRequest::withConnectTimeout()
 ├── CurlTransport.php              — cURL implementation; all curl_* calls are isolated here
-├── FakeTransport.php              — Test double: returns pre-configured HttpResponse objects; records sent requests for assertions
+├── FakeTransport.php              — Test double: URL-pattern fixtures or an ordered sequence() (fails loudly when exhausted); records sent requests incl. timeouts for assertions
 ├── CircuitBreakerTransport.php    — TransportInterface decorator: per-host circuit (closed/open/half-open) with state in ez-php/cache (soft dependency)
 ├── CircuitOpenException.php       — HttpClientException thrown instead of calling an open circuit; never retried by retry()
 ├── Backoff.php                    — Delay strategy for retry(): constant() / exponential() with optional equal jitter
@@ -306,6 +307,8 @@ tests/
 ├── HttpTest.php                          — Covers Http façade: setClient, resetClient, lazy default client
 ├── HttpStreamTest.php                    — HttpStream accessors, iteration, body(), close hook, fake()
 ├── RetryTest.php                         — retry(): default 5xx rule, custom condition, backoff() replacing the fixed sleep, CircuitOpenException never retried
+├── ConnectTimeoutTest.php                — withConnectTimeout() reaching FakeTransport (send + stream), through CircuitBreakerTransport, ignored by plain transports; CurlTransport copy
+├── FakeTransportSequenceTest.php         — sequence(): queue order for one URL, queued exceptions, LogicException on overrun, streams, pending()
 ├── RetryAfterTest.php                    — RetryAfter parsing (seconds, HTTP-date, invalid); respectRetryAfter() preferring the header over backoff, the cap, 429 retry
 ├── BackoffTest.php                       — constant/exponential delays, cap, multiplier, equal-jitter bounds, injected random source
 ├── CircuitBreakerTransportTest.php       — closed→open→half-open→closed, failed probe, single probe under a held lock, failure window, per-host circuits, custom classification
@@ -384,6 +387,7 @@ Fluent **builder** for a pending request. Each wither returns a clone — the or
 | `withJson(array)` | JSON-encodes data; sets `Content-Type: application/json` |
 | `withForm(array)` | `http_build_query()` encodes data; sets `Content-Type: application/x-www-form-urlencoded` |
 | `withTimeout(int)` | Sets the total request timeout in seconds for this request (overrides the transport default) |
+| `withConnectTimeout(int)` | Bounds the connection phase for `send()` and `stream()` (transports implementing `ConnectTimeoutTransportInterface`; default unchanged: none for `send()`, 10 s for `stream()`) |
 
 **Dispatch shortcuts** (each calls `send()` internally):
 
@@ -461,6 +465,8 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **30-second default timeout, overridable per request** — `TIMEOUT_SECONDS` is a public class constant on `CurlTransport` (and `Pool`) used as the fallback. `HttpRequest::withTimeout()` / `PooledRequest::withTimeout()` override it for a single request; the value travels as the optional fifth argument of `TransportInterface::send()`. `null` means "use the transport's default", so existing callers are unaffected.
 - **The timeout parameter was added to `TransportInterface`, not worked around** — This widens the interface, which breaks any external implementor at load time (PHP requires an implementation to declare every parameter the interface does, optional ones included). It was still the right call: the alternative — smuggling the timeout through a header or a transport constructor — would have put per-request state on a per-application object. All 13 in-repo implementations (2 in `src/`, 11 test doubles) were updated together.
 - **`FakeTransport::getRecorded()` gained a `timeoutSeconds` key** — `FakeTransport` ships in `src/`, not `tests/`, so it is public test infrastructure and its recorded-request shape is part of the package's surface. Callers that index individual keys (`getRecorded()[0]['body']`) are unaffected; a caller asserting the whole array with `assertSame` would break. All in-repo callers — `Http::assertSent()`/`assertNotSent()` and the `ez-php/ai` driver tests — index individual keys.
+- **The connect timeout is an optional transport capability, not a `TransportInterface` parameter** — widening the interface again would break every external transport (see above). `ConnectTimeoutTransportInterface::withConnectTimeout()` returns a configured transport: `CurlTransport` a clone, `CircuitBreakerTransport` a clone around its configured inner transport, `FakeTransport` itself (it only records the value for the next request, so `getRecorded()` keeps working — `connectTimeoutSeconds` key). A transport without the capability (e.g. `ez-php/otel`'s `TracingTransport`, which wraps the inner one) silently gets none; `Pool` does not support it.
+- **`FakeTransport::sequence()` fails with a `LogicException`, not an `HttpClientException`** — an unexpected extra request must surface in the test, while code under test usually catches `HttpClientException` as a network failure and would hide it.
 - **Timeout applies per attempt, not per retry sequence** — `retry()` re-dispatches the same closure, so each attempt gets the full timeout. A request with `withTimeout(3)->retry(2)` can therefore take up to ~9 seconds plus sleeps. Capping total elapsed time is an application-layer concern.
 - **Streaming is a pull over a push** — cURL pushes body bytes into `WRITEFUNCTION` while a transfer runs; generators pull. `CurlStreamHandle::pump()` drives one easy handle through its own `curl_multi` only when the consumer asks for the next chunk. Nothing pumps while nobody pulls, so the socket buffer fills and the server waits — back-pressure without a memory bound to tune. Rejected: Fibers suspended from a cURL C callback (fragile, hidden) and a blocking callback API (does not compose with `AiStream` or `StreamedResponse`).
 - **Idle timeout, no total timeout, for streams** — a streamed answer may run for minutes. The transfer fails only when no data arrives for `withIdleTimeout()` seconds (default `HttpRequest::DEFAULT_IDLE_TIMEOUT_SECONDS`, 30). The idle clock runs inside `pump()` only, so a slow consumer between pulls never looks like a silent server. Connect is bounded separately by `CurlTransport::CONNECT_TIMEOUT_SECONDS` (10).
@@ -501,7 +507,6 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 | Retry policies beyond `retry()` + `Backoff` + `respectRetryAfter()` (retry budgets, hedged requests) | Application layer or a decorator wrapping `TransportInterface` |
 | Bulkheads / adaptive concurrency limits | Application layer — the circuit breaker only trips on consecutive failures |
 | Total-elapsed-time budget across a retry sequence | Application layer — `withTimeout()` bounds each attempt, not the whole sequence |
-| Configurable connect timeout (`CURLOPT_CONNECTTIMEOUT`) | Not exposed; `send()` has only the total timeout, `stream()` a fixed 10 s connect timeout |
 | Event-loop / promise-based async (fibers, ReactPHP) | Out of scope — `Pool`/`PooledRequest` (`Http::async()`, `Http::pool()`) provide concurrency via `curl_multi_exec`, which is blocking-but-parallel, not an event loop |
 | Streaming for `Pool`, or retry/middleware for streams | Out of scope — see the `stream()` design decisions above |
 | `EventSource` reconnection (`retry`, `Last-Event-ID`) | Application layer — `SseDecoder` only decodes |

@@ -45,6 +45,8 @@ final class HttpRequest
 
     private ?int $timeoutSeconds = null;
 
+    private ?int $connectTimeoutSeconds = null;
+
     private int $idleTimeoutSeconds = self::DEFAULT_IDLE_TIMEOUT_SECONDS;
 
     private int $retryTimes = 0;
@@ -261,6 +263,27 @@ final class HttpRequest
     }
 
     /**
+     * Bound the connection phase (DNS, TCP and TLS handshake) for send() and stream().
+     *
+     * Without it send() has no separate connect timeout (cURL's default), so a dead
+     * host stalls the request for its whole total timeout; stream() uses
+     * CurlTransport::CONNECT_TIMEOUT_SECONDS (10). Applied by transports that
+     * implement ConnectTimeoutTransportInterface (CurlTransport, CircuitBreakerTransport
+     * over one, FakeTransport records it); other transports ignore it.
+     *
+     * @param int $seconds Connect timeout in seconds.
+     *
+     * @return self
+     */
+    public function withConnectTimeout(int $seconds): self
+    {
+        $clone = clone $this;
+        $clone->connectTimeoutSeconds = $seconds;
+
+        return $clone;
+    }
+
+    /**
      * Set the idle timeout for stream(): the maximum time without receiving any data.
      *
      * A streamed response may legitimately run for minutes, so streams have no
@@ -366,7 +389,7 @@ final class HttpRequest
     {
         ['headers' => $headers, 'body' => $body] = $this->resolvePayload();
 
-        $transport = $this->transport;
+        $transport = $this->effectiveTransport();
         $method = $this->method;
         $url = $this->url;
         $timeoutSeconds = $this->timeoutSeconds;
@@ -481,17 +504,33 @@ final class HttpRequest
             throw new HttpClientException('stream() does not support withMiddleware(): middleware closures operate on a complete HttpResponse.');
         }
 
-        if (!$this->transport instanceof StreamingTransportInterface) {
+        $transport = $this->effectiveTransport();
+
+        if (!$transport instanceof StreamingTransportInterface) {
             throw new HttpClientException(sprintf(
                 'Transport %s does not support streaming; it must implement %s.',
-                $this->transport::class,
+                $transport::class,
                 StreamingTransportInterface::class,
             ));
         }
 
         ['headers' => $headers, 'body' => $body] = $this->resolvePayload();
 
-        return $this->transport->stream($this->method, $this->url, $headers, $body, $this->idleTimeoutSeconds);
+        return $transport->stream($this->method, $this->url, $headers, $body, $this->idleTimeoutSeconds);
+    }
+
+    /**
+     * The transport with this request's connect timeout applied, when it supports one.
+     *
+     * @return TransportInterface
+     */
+    private function effectiveTransport(): TransportInterface
+    {
+        if ($this->connectTimeoutSeconds !== null && $this->transport instanceof ConnectTimeoutTransportInterface) {
+            return $this->transport->withConnectTimeout($this->connectTimeoutSeconds);
+        }
+
+        return $this->transport;
     }
 
     /**

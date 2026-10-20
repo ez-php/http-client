@@ -37,7 +37,7 @@ use EzPhp\Cache\CacheInterface;
  *
  * @package EzPhp\HttpClient
  */
-final class CircuitBreakerTransport implements TransportInterface
+final class CircuitBreakerTransport implements TransportInterface, ConnectTimeoutTransportInterface
 {
     private const string KEY_PREFIX = 'http-client:circuit:';
 
@@ -85,6 +85,22 @@ final class CircuitBreakerTransport implements TransportInterface
             return is_string($host) && $host !== '' ? strtolower($host) : $url;
         };
         $this->clock = $clock ?? static fn (): int => time();
+    }
+
+    /**
+     * Pass a connect timeout through to the wrapped transport, keeping the circuit state.
+     *
+     * @param int $seconds
+     *
+     * @return TransportInterface
+     */
+    public function withConnectTimeout(int $seconds): TransportInterface
+    {
+        if (!$this->inner instanceof ConnectTimeoutTransportInterface) {
+            return $this;
+        }
+
+        return clone($this, ['inner' => $this->inner->withConnectTimeout($seconds)]);
     }
 
     /**

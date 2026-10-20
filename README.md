@@ -77,6 +77,19 @@ The timeout bounds each individual attempt. Combined with `retry()`, a request w
 `PooledRequest::withTimeout()` does the same for concurrent requests, where each
 handle carries its own timeout.
 
+`withConnectTimeout()` bounds only the connection phase (DNS, TCP, TLS), so a dead host fails
+fast instead of stalling for the whole total timeout:
+
+```php
+Http::get('https://api.example.com/orders')
+    ->withConnectTimeout(3)  // give up connecting after 3 s
+    ->withTimeout(30)        // whole request
+    ->send();
+```
+
+It applies to `send()` and `stream()` on `CurlTransport` (also behind `CircuitBreakerTransport`).
+Without it nothing changes: `send()` has no separate connect timeout, `stream()` uses 10 s.
+
 ### Streaming responses
 
 `stream()` returns as soon as the response headers arrive; the body is read while you iterate:
@@ -229,6 +242,23 @@ $fake = new FakeTransport([
     'https://api.example.com/*' => new HttpResponse(200, '{"id":1}', []),
 ]);
 $client = new HttpClient($fake);
+```
+
+To script the call *order* — the same URL answering `401` and then `200`, a `429` before a
+retry, a network error in between — use `FakeTransport::sequence()`. Every request takes the
+next fixture whatever its URL; an unexpected extra request throws a `LogicException`:
+
+```php
+$fake = FakeTransport::sequence([
+    new HttpResponse(401, ''),
+    new HttpClientException('connection reset'),
+    new HttpResponse(200, '{"id":1}'),
+]);
+
+// ... exercise the code ...
+
+$this->assertSame(0, $fake->pending());       // every fixture was used
+$this->assertCount(3, $fake->getRecorded());  // same recording as the URL-map mode
 ```
 
 Streamed requests use the same fake. `HttpStream::fake()` takes the chunks; a `Throwable` in the list is thrown at that position:

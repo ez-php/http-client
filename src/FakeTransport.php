@@ -17,9 +17,18 @@ namespace EzPhp\HttpClient;
  * as one chunk; send() on an HttpStream drains it. An HttpStream fixture is
  * single use — register a fresh one per streamed request.
  *
+ * FakeTransport::sequence() scripts the call *order* instead of URLs: every
+ * request takes the next queued fixture (the same URL answering 401 then 200,
+ * a queued HttpClientException), and a request beyond the queue throws a
+ * LogicException — deliberately not an HttpClientException, so code under
+ * test cannot swallow it as a network error.
+ *
+ * withConnectTimeout() records the value on the next request (this same
+ * instance, so getRecorded() keeps working) instead of applying it.
+ *
  * @package EzPhp\HttpClient
  */
-final class FakeTransport implements StreamingTransportInterface
+final class FakeTransport implements StreamingTransportInterface, ConnectTimeoutTransportInterface
 {
     /**
      * @var array<string, HttpResponse|HttpStream|HttpClientException>
@@ -27,7 +36,19 @@ final class FakeTransport implements StreamingTransportInterface
     private array $responseMap;
 
     /**
-     * @var list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null}>
+     * Ordered fixtures in sequence mode; null in URL-map mode.
+     *
+     * @var list<HttpResponse|HttpStream|HttpClientException>|null
+     */
+    private ?array $sequence = null;
+
+    /**
+     * Connect timeout handed over by withConnectTimeout() for the next request.
+     */
+    private ?int $pendingConnectTimeout = null;
+
+    /**
+     * @var list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null, connectTimeoutSeconds: int|null}>
      */
     private array $recorded = [];
 
@@ -40,6 +61,45 @@ final class FakeTransport implements StreamingTransportInterface
     public function __construct(array $responseMap = [])
     {
         $this->responseMap = $responseMap;
+    }
+
+    /**
+     * Create a fake that answers requests strictly in order, whatever their URL.
+     *
+     * @param list<HttpResponse|HttpStream|HttpClientException> $fixtures One per expected request.
+     *
+     * @return self
+     */
+    public static function sequence(array $fixtures): self
+    {
+        $fake = new self();
+        $fake->sequence = $fixtures;
+
+        return $fake;
+    }
+
+    /**
+     * Number of queued sequence fixtures not consumed yet (0 in URL-map mode).
+     *
+     * @return int
+     */
+    public function pending(): int
+    {
+        return count($this->sequence ?? []);
+    }
+
+    /**
+     * Record the connect timeout on the next request; returns this same fake.
+     *
+     * @param int $seconds
+     *
+     * @return self
+     */
+    public function withConnectTimeout(int $seconds): self
+    {
+        $this->pendingConnectTimeout = $seconds;
+
+        return $this;
     }
 
     /**
@@ -63,7 +123,7 @@ final class FakeTransport implements StreamingTransportInterface
     ): HttpResponse {
         $this->record($method, $url, $headers, $body, $timeoutSeconds, null);
 
-        $fixture = $this->match($url);
+        $fixture = $this->next($method, $url);
 
         if ($fixture instanceof HttpClientException) {
             throw $fixture;
@@ -97,7 +157,7 @@ final class FakeTransport implements StreamingTransportInterface
     ): HttpStream {
         $this->record($method, $url, $headers, $body, null, $idleTimeoutSeconds);
 
-        $fixture = $this->match($url);
+        $fixture = $this->next($method, $url);
 
         if ($fixture instanceof HttpClientException) {
             throw $fixture;
@@ -115,9 +175,10 @@ final class FakeTransport implements StreamingTransportInterface
     /**
      * Return all recorded requests in the order they were made.
      *
-     * `idleTimeoutSeconds` is null for send(); `timeoutSeconds` is null for stream().
+     * `idleTimeoutSeconds` is null for send(); `timeoutSeconds` is null for stream();
+     * `connectTimeoutSeconds` is null unless the request set withConnectTimeout().
      *
-     * @return list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null}>
+     * @return list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null, connectTimeoutSeconds: int|null}>
      */
     public function getRecorded(): array
     {
@@ -149,7 +210,36 @@ final class FakeTransport implements StreamingTransportInterface
             'body' => $body,
             'timeoutSeconds' => $timeoutSeconds,
             'idleTimeoutSeconds' => $idleTimeoutSeconds,
+            'connectTimeoutSeconds' => $this->pendingConnectTimeout,
         ];
+        $this->pendingConnectTimeout = null;
+    }
+
+    /**
+     * The fixture for this request: the next queued one in sequence mode, else the URL match.
+     *
+     * @param string $method
+     * @param string $url
+     *
+     * @return HttpResponse|HttpStream|HttpClientException|null
+     * @throws \LogicException When a sequence is exhausted.
+     */
+    private function next(string $method, string $url): HttpResponse|HttpStream|HttpClientException|null
+    {
+        if ($this->sequence === null) {
+            return $this->match($url);
+        }
+
+        if ($this->sequence === []) {
+            throw new \LogicException(sprintf(
+                'FakeTransport sequence exhausted: unexpected request #%d %s %s.',
+                count($this->recorded),
+                $method,
+                $url,
+            ));
+        }
+
+        return array_shift($this->sequence);
     }
 
     /**
