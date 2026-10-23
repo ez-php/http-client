@@ -301,6 +301,10 @@ src/
 
 tests/
 ├── TestCase.php                          — Base PHPUnit test case
+├── PoolTest.php  — Tests Pool, PooledRequest, Http::pool(), and Http::async()
+├── MultipartTest.php  — attach(): multipart Content-Type, field/filename/contents/MIME parts, boundaries, immutability
+├── MiddlewareTest.php  — withMiddleware(): intercept/replace/short-circuit, ordering, immutability, combined with retry()
+├── FakeTransportTest.php  — Tests Http::fake(), Http::response(), Http::assertSent(), Http::assertNotSent(), and FakeTransport directly
 ├── HttpClientTest.php                    — Covers HttpClient factory methods using a fake transport
 ├── CurlHeadersTest.php                   — format/parse, redirect blocks keep only the final header block
 ├── HttpRequestTest.php                   — Covers HttpRequest builder: withHeaders, withJson, withForm, send shortcuts
