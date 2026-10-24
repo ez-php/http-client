@@ -301,6 +301,7 @@ src/
 
 tests/
 ├── TestCase.php                          — Base PHPUnit test case
+├── ApplicationTestCase.php               — base class for tests that need a bootstrapped Application
 ├── PoolTest.php  — Tests Pool, PooledRequest, Http::pool(), and Http::async()
 ├── MultipartTest.php  — attach(): multipart Content-Type, field/filename/contents/MIME parts, boundaries, immutability
 ├── MiddlewareTest.php  — withMiddleware(): intercept/replace/short-circuit, ordering, immutability, combined with retry()
