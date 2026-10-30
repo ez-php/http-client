@@ -24,11 +24,12 @@ namespace EzPhp\HttpClient;
  * test cannot swallow it as a network error.
  *
  * withConnectTimeout() records the value on the next request (this same
- * instance, so getRecorded() keeps working) instead of applying it.
+ * instance, so getRecorded() keeps working) instead of applying it; withoutRedirects()
+ * records `followRedirects: false` the same way.
  *
  * @package EzPhp\HttpClient
  */
-final class FakeTransport implements StreamingTransportInterface, ConnectTimeoutTransportInterface
+final class FakeTransport implements StreamingTransportInterface, ConnectTimeoutTransportInterface, RedirectControlTransportInterface
 {
     /**
      * @var array<string, HttpResponse|HttpStream|HttpClientException>
@@ -48,7 +49,12 @@ final class FakeTransport implements StreamingTransportInterface, ConnectTimeout
     private ?int $pendingConnectTimeout = null;
 
     /**
-     * @var list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null, connectTimeoutSeconds: int|null}>
+     * False when withoutRedirects() applies to the next request.
+     */
+    private bool $pendingFollowRedirects = true;
+
+    /**
+     * @var list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null, connectTimeoutSeconds: int|null, followRedirects: bool}>
      */
     private array $recorded = [];
 
@@ -89,7 +95,19 @@ final class FakeTransport implements StreamingTransportInterface, ConnectTimeout
     }
 
     /**
-     * Record the connect timeout on the next request; returns this same fake.
+     * Record the opt-out on the next request (see the class docblock).
+     *
+     * @return self
+     */
+    public function withoutRedirects(): self
+    {
+        $this->pendingFollowRedirects = false;
+
+        return $this;
+    }
+
+    /**
+     * Record the connect timeout on the next request (see the class docblock).
      *
      * @param int $seconds
      *
@@ -176,9 +194,10 @@ final class FakeTransport implements StreamingTransportInterface, ConnectTimeout
      * Return all recorded requests in the order they were made.
      *
      * `idleTimeoutSeconds` is null for send(); `timeoutSeconds` is null for stream();
-     * `connectTimeoutSeconds` is null unless the request set withConnectTimeout().
+     * `connectTimeoutSeconds` is null unless the request set withConnectTimeout();
+     * `followRedirects` is false when it set withoutRedirects().
      *
-     * @return list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null, connectTimeoutSeconds: int|null}>
+     * @return list<array{method: string, url: string, headers: array<string, string>, body: string, timeoutSeconds: int|null, idleTimeoutSeconds: int|null, connectTimeoutSeconds: int|null, followRedirects: bool}>
      */
     public function getRecorded(): array
     {
@@ -211,8 +230,10 @@ final class FakeTransport implements StreamingTransportInterface, ConnectTimeout
             'timeoutSeconds' => $timeoutSeconds,
             'idleTimeoutSeconds' => $idleTimeoutSeconds,
             'connectTimeoutSeconds' => $this->pendingConnectTimeout,
+            'followRedirects' => $this->pendingFollowRedirects,
         ];
         $this->pendingConnectTimeout = null;
+        $this->pendingFollowRedirects = true;
     }
 
     /**

@@ -275,6 +275,7 @@ Fluent cURL HTTP client for outgoing requests.
 src/
 ├── TransportInterface.php         — I/O seam: send(method, url, headers, body) → HttpResponse
 ├── ConnectTimeoutTransportInterface.php — optional capability: withConnectTimeout(seconds) → transport; used by HttpRequest::withConnectTimeout()
+├── RedirectControlTransportInterface.php — optional capability: withoutRedirects(); HttpRequest::withoutRedirects() fails closed without it
 ├── CurlTransport.php              — cURL implementation; all curl_* calls are isolated here
 ├── FakeTransport.php              — Test double: URL-pattern fixtures or an ordered sequence() (fails loudly when exhausted); records sent requests incl. timeouts for assertions
 ├── CircuitBreakerTransport.php    — TransportInterface decorator: per-host circuit (closed/open/half-open) with state in ez-php/cache (soft dependency)
@@ -357,7 +358,8 @@ The only class in this package that calls any `curl_*` function. All cURL logic 
 Key behaviours:
 - `CURLOPT_RETURNTRANSFER true` + `CURLOPT_HEADER true` — response includes raw headers prepended to body
 - `CURLOPT_TIMEOUT` — the `$timeoutSeconds` argument, falling back to the public `TIMEOUT_SECONDS` constant (30) when null
-- `CURLOPT_FOLLOWLOCATION true` — follows redirects automatically
+- `CURLOPT_FOLLOWLOCATION` — follows redirects unless `withoutRedirects()` was used
+- `CURLOPT_PROTOCOLS_STR`/`CURLOPT_REDIR_PROTOCOLS_STR` — `http,https` only, also in `Pool`
 - `CURLOPT_CUSTOMREQUEST` — used for all verbs, including GET with a body
 - Headers split via `CURLINFO_HEADER_SIZE`; on redirects only the **last** header block is kept
 - Response headers normalised to **lowercase** on parse
@@ -394,6 +396,7 @@ Fluent **builder** for a pending request. Each wither returns a clone — the or
 | `withForm(array)` | `http_build_query()` encodes data; sets `Content-Type: application/x-www-form-urlencoded` |
 | `withTimeout(int)` | Sets the total request timeout in seconds for this request (overrides the transport default) |
 | `withConnectTimeout(int)` | Bounds the connection phase for `send()` and `stream()` (transports implementing `ConnectTimeoutTransportInterface`; default unchanged: none for `send()`, 10 s for `stream()`) |
+| `withoutRedirects()` | Returns a 3xx instead of following it, for `send()` and `stream()`; throws when the transport lacks `RedirectControlTransportInterface` |
 
 **Dispatch shortcuts** (each calls `send()` internally):
 
@@ -471,6 +474,7 @@ $app->bind(TransportInterface::class, MyCustomTransport::class);
 - **30-second default timeout, overridable per request** — `TIMEOUT_SECONDS` is a public class constant on `CurlTransport` (and `Pool`) used as the fallback. `HttpRequest::withTimeout()` / `PooledRequest::withTimeout()` override it for a single request; the value travels as the optional fifth argument of `TransportInterface::send()`. `null` means "use the transport's default", so existing callers are unaffected.
 - **The timeout parameter was added to `TransportInterface`, not worked around** — This widens the interface, which breaks any external implementor at load time (PHP requires an implementation to declare every parameter the interface does, optional ones included). It was still the right call: the alternative — smuggling the timeout through a header or a transport constructor — would have put per-request state on a per-application object. All 13 in-repo implementations (2 in `src/`, 11 test doubles) were updated together.
 - **`FakeTransport::getRecorded()` gained a `timeoutSeconds` key** — `FakeTransport` ships in `src/`, not `tests/`, so it is public test infrastructure and its recorded-request shape is part of the package's surface. Callers that index individual keys (`getRecorded()[0]['body']`) are unaffected; a caller asserting the whole array with `assertSame` would break. All in-repo callers — `Http::assertSent()`/`assertNotSent()` and the `ez-php/ai` driver tests — index individual keys.
+- **`withoutRedirects()` fails closed, unlike the connect timeout** — A missing connect timeout only costs time; a silently followed redirect sends the request to a host the caller meant to avoid. So a transport without the capability makes the request throw, and decorators (`CircuitBreakerTransport`, ez-php/otel's `TracingTransport`) pass it through. `Pool` reads `CurlTransport::followsRedirects()`, since its concurrent path builds its own handles.
 - **The connect timeout is an optional transport capability, not a `TransportInterface` parameter** — widening the interface again would break every external transport (see above). `ConnectTimeoutTransportInterface::withConnectTimeout()` returns a configured transport: `CurlTransport` a clone, `CircuitBreakerTransport` a clone around its configured inner transport, `FakeTransport` itself (it only records the value for the next request, so `getRecorded()` keeps working — `connectTimeoutSeconds` key). A transport without the capability (e.g. `ez-php/otel`'s `TracingTransport`, which wraps the inner one) silently gets none; `Pool` does not support it.
 - **`FakeTransport::sequence()` fails with a `LogicException`, not an `HttpClientException`** — an unexpected extra request must surface in the test, while code under test usually catches `HttpClientException` as a network failure and would hide it.
 - **Timeout applies per attempt, not per retry sequence** — `retry()` re-dispatches the same closure, so each attempt gets the full timeout. A request with `withTimeout(3)->retry(2)` can therefore take up to ~9 seconds plus sleeps. Capping total elapsed time is an application-layer concern.

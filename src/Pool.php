@@ -234,7 +234,9 @@ final class Pool
             curl_setopt($ch, CURLOPT_TIMEOUT, $req->getTimeoutSeconds() ?? self::TIMEOUT_SECONDS);
             curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $method);
             curl_setopt($ch, CURLOPT_HTTPHEADER, CurlHeaders::format($headers));
-            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+            curl_setopt($ch, CURLOPT_FOLLOWLOCATION, !$this->transport instanceof CurlTransport || $this->transport->followsRedirects());
+            curl_setopt($ch, CURLOPT_PROTOCOLS_STR, 'http,https');
+            curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS_STR, 'http,https');
 
             if ($body !== '') {
                 curl_setopt($ch, CURLOPT_POSTFIELDS, $body);

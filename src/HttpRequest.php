@@ -66,6 +66,11 @@ final class HttpRequest
     private ?int $retryAfterMaxMs = null;
 
     /**
+     * False after withoutRedirects().
+     */
+    private bool $followRedirects = true;
+
+    /**
      * HttpRequest Constructor
      *
      * @param string             $method
@@ -279,6 +284,24 @@ final class HttpRequest
     {
         $clone = clone $this;
         $clone->connectTimeoutSeconds = $seconds;
+
+        return $clone;
+    }
+
+    /**
+     * Return a 3xx response instead of following it.
+     *
+     * For URLs you do not control (webhook subscribers, user-supplied links):
+     * following a redirect would send the request to a host nobody validated.
+     * Fails closed — send() and stream() throw when the transport does not
+     * implement RedirectControlTransportInterface.
+     *
+     * @return self
+     */
+    public function withoutRedirects(): self
+    {
+        $clone = clone $this;
+        $clone->followRedirects = false;
 
         return $clone;
     }
@@ -520,17 +543,33 @@ final class HttpRequest
     }
 
     /**
-     * The transport with this request's connect timeout applied, when it supports one.
+     * The transport with this request's connect timeout (when it supports one)
+     * and redirect opt-out applied.
      *
      * @return TransportInterface
+     * @throws HttpClientException When redirects must be off and the transport cannot do that.
      */
     private function effectiveTransport(): TransportInterface
     {
-        if ($this->connectTimeoutSeconds !== null && $this->transport instanceof ConnectTimeoutTransportInterface) {
-            return $this->transport->withConnectTimeout($this->connectTimeoutSeconds);
+        $transport = $this->transport;
+
+        if (!$this->followRedirects) {
+            if (!$transport instanceof RedirectControlTransportInterface) {
+                throw new HttpClientException(sprintf(
+                    'Transport %s cannot disable redirects; it must implement %s.',
+                    $transport::class,
+                    RedirectControlTransportInterface::class,
+                ));
+            }
+
+            $transport = $transport->withoutRedirects();
         }
 
-        return $this->transport;
+        if ($this->connectTimeoutSeconds !== null && $transport instanceof ConnectTimeoutTransportInterface) {
+            return $transport->withConnectTimeout($this->connectTimeoutSeconds);
+        }
+
+        return $transport;
     }
 
     /**

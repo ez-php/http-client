@@ -14,9 +14,12 @@ use Generator;
  * All curl logic is isolated here and in CurlStreamHandle — no curl calls
  * exist anywhere else.
  *
+ * Only http and https are allowed, for the request and for any redirect it
+ * follows: a URL or Location header cannot make cURL open file:// or gopher://.
+ *
  * @package EzPhp\HttpClient
  */
-final class CurlTransport implements StreamingTransportInterface, ConnectTimeoutTransportInterface
+final class CurlTransport implements StreamingTransportInterface, ConnectTimeoutTransportInterface, RedirectControlTransportInterface
 {
     /**
      * Fallback timeout used when the caller does not supply one.
@@ -35,6 +38,11 @@ final class CurlTransport implements StreamingTransportInterface, ConnectTimeout
     private ?int $connectTimeoutSeconds = null;
 
     /**
+     * False after withoutRedirects(): a 3xx response is returned as is.
+     */
+    private bool $followRedirects = true;
+
+    /**
      * Return a copy that bounds the connection phase of send() and stream().
      *
      * @param int $seconds
@@ -47,6 +55,29 @@ final class CurlTransport implements StreamingTransportInterface, ConnectTimeout
         $clone->connectTimeoutSeconds = $seconds;
 
         return $clone;
+    }
+
+    /**
+     * Return a copy that returns a 3xx response instead of following it.
+     *
+     * @return self
+     */
+    public function withoutRedirects(): self
+    {
+        $clone = clone $this;
+        $clone->followRedirects = false;
+
+        return $clone;
+    }
+
+    /**
+     * Whether this transport follows redirects; read by Pool's concurrent path.
+     *
+     * @return bool
+     */
+    public function followsRedirects(): bool
+    {
+        return $this->followRedirects;
     }
 
     /**
@@ -124,7 +155,7 @@ final class CurlTransport implements StreamingTransportInterface, ConnectTimeout
         curl_setopt($ch, CURLOPT_TIMEOUT, 0);
         curl_setopt($ch, CURLOPT_CONNECTTIMEOUT, $this->connectTimeoutSeconds ?? self::CONNECT_TIMEOUT_SECONDS);
 
-        $handle = new CurlStreamHandle($ch);
+        $handle = new CurlStreamHandle($ch, $this->followRedirects);
 
         while (!$handle->headersComplete() && !$handle->isDone()) {
             if (!$handle->pump($idleTimeoutSeconds)) {
@@ -217,7 +248,9 @@ final class CurlTransport implements StreamingTransportInterface, ConnectTimeout
         curl_setopt($ch, CURLOPT_URL, $url);
         curl_setopt($ch, CURLOPT_CUSTOMREQUEST, $upperMethod);
         curl_setopt($ch, CURLOPT_HTTPHEADER, CurlHeaders::format($headers));
-        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, true);
+        curl_setopt($ch, CURLOPT_FOLLOWLOCATION, $this->followRedirects);
+        curl_setopt($ch, CURLOPT_PROTOCOLS_STR, 'http,https');
+        curl_setopt($ch, CURLOPT_REDIR_PROTOCOLS_STR, 'http,https');
 
         if ($body !== '') {
             curl_setopt($ch, CURLOPT_POSTFIELDS, $body);

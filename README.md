@@ -90,6 +90,22 @@ Http::get('https://api.example.com/orders')
 It applies to `send()` and `stream()` on `CurlTransport` (also behind `CircuitBreakerTransport`).
 Without it nothing changes: `send()` has no separate connect timeout, `stream()` uses 10 s.
 
+### Redirects and URLs you do not control
+
+Redirects are followed by default. For a URL you do not control (a webhook subscriber, a
+user-supplied link), turn them off so the target cannot steer the request to another host:
+
+```php
+$response = Http::post($subscriberUrl)->withoutRedirects()->withJson($payload)->send();
+// a 3xx comes back as a normal response; the Location is never requested
+```
+
+`send()` and `stream()` throw `HttpClientException` when the transport cannot disable redirects
+(it must implement `RedirectControlTransportInterface`; `CurlTransport`, `CircuitBreakerTransport`
+and `FakeTransport` do). `CurlTransport` and `Pool` only speak `http` and `https`, for the request
+and for any redirect. This is not a destination check: an `http://169.254.169.254/` URL is still
+requested, so validate URLs from outside before you use them.
+
 ### Streaming responses
 
 `stream()` returns as soon as the response headers arrive; the body is read while you iterate:

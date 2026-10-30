@@ -37,7 +37,7 @@ use EzPhp\Cache\CacheInterface;
  *
  * @package EzPhp\HttpClient
  */
-final class CircuitBreakerTransport implements TransportInterface, ConnectTimeoutTransportInterface
+final class CircuitBreakerTransport implements TransportInterface, ConnectTimeoutTransportInterface, RedirectControlTransportInterface
 {
     private const string KEY_PREFIX = 'http-client:circuit:';
 
@@ -88,7 +88,22 @@ final class CircuitBreakerTransport implements TransportInterface, ConnectTimeou
     }
 
     /**
-     * Pass a connect timeout through to the wrapped transport, keeping the circuit state.
+     * Return a breaker whose wrapped transport does not follow redirects.
+     *
+     * @return TransportInterface
+     * @throws HttpClientException When the wrapped transport cannot disable redirects.
+     */
+    public function withoutRedirects(): TransportInterface
+    {
+        if (!$this->inner instanceof RedirectControlTransportInterface) {
+            throw new HttpClientException(sprintf('Transport %s cannot disable redirects.', $this->inner::class));
+        }
+
+        return clone($this, ['inner' => $this->inner->withoutRedirects()]);
+    }
+
+    /**
+     * Return a breaker whose wrapped transport applies the connect timeout.
      *
      * @param int $seconds
      *

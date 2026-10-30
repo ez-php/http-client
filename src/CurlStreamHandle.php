@@ -45,10 +45,13 @@ final class CurlStreamHandle
     /**
      * CurlStreamHandle Constructor
      *
-     * @param CurlHandle $handle A configured easy handle without RETURNTRANSFER.
+     * @param CurlHandle $handle          A configured easy handle without RETURNTRANSFER.
+     * @param bool       $followRedirects Whether the handle follows redirects (a 3xx is then interim).
      */
-    public function __construct(private readonly CurlHandle $handle)
-    {
+    public function __construct(
+        private readonly CurlHandle $handle,
+        private readonly bool $followRedirects = true,
+    ) {
         curl_setopt($handle, CURLOPT_HEADERFUNCTION, $this->onHeader(...));
         curl_setopt($handle, CURLOPT_WRITEFUNCTION, $this->onWrite(...));
 
@@ -206,7 +209,7 @@ final class CurlStreamHandle
     /**
      * HEADERFUNCTION callback. Keeps only the final header block: a status
      * line starts a new block; an empty line ends it, and the block is final
-     * unless it is 1xx or a 3xx with Location (FOLLOWLOCATION follows it).
+     * unless it is 1xx or a 3xx with Location that FOLLOWLOCATION will follow.
      *
      * @param CurlHandle $handle
      * @param string     $line
@@ -223,7 +226,7 @@ final class CurlStreamHandle
             $this->headers = [];
         } elseif ($trimmed === '') {
             $interim = ($this->status >= 100 && $this->status < 200)
-                || ($this->status >= 300 && $this->status < 400 && isset($this->headers['location']));
+                || ($this->followRedirects && $this->status >= 300 && $this->status < 400 && isset($this->headers['location']));
 
             if (!$interim) {
                 $this->headersComplete = true;
